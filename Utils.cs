@@ -186,7 +186,7 @@ internal class Utils
             text = Regex.Replace(text, @"\{进度\}", "无", RegexOptions.IgnoreCase);
 
         // 入侵事件
-        if(Main.invasionType > 0)
+        if (Main.invasionType > 0)
             text = Regex.Replace(text, @"\{入侵\}", GetInvasionName(Main.invasionType), RegexOptions.IgnoreCase);
         else
             text = Regex.Replace(text, @"\{入侵\}", "无", RegexOptions.IgnoreCase);
@@ -937,5 +937,26 @@ internal class Utils
         var unlockState = Main.BestiaryDB.FindEntryByNPCID(type).UIInfoProvider.GetEntryUICollectionInfo().UnlockState;
         return unlockState == Terraria.GameContent.Bestiary.BestiaryEntryUnlockState.CanShowDropsWithDropRates_4;
     }
+    #endregion
+
+    #region 所有条件参考
+    public static readonly List<string> AllConditions = new List<string>
+    {
+    // BOSS进度
+    "克眼", "史莱姆王", "世吞", "克脑", "巨鹿", "蜂王", "骷髅王前", "骷髅王",
+    "肉前", "肉后", "毁灭者", "双子眼", "机械骷髅王", "世纪之花", "石巨人",
+    "史后", "光女", "猪鲨", "拜月", "月总",
+    // 事件
+    "哥布林入侵", "海盗入侵", "霜月", "血月", "雨天", "白天", "晚上", "大风天",
+    "万圣节", "圣诞节", "派对", "旧日一", "旧日二", "旧日三",
+    // 特殊种子
+    "2020", "2021", "ftw", "ntb", "dst", "remix", "noTrap", "天顶",
+    // 生物群落
+    "森林", "丛林", "沙漠", "雪原", "洞穴", "海洋", "地表", "太空", "地狱",
+    "神圣", "蘑菇", "腐化", "猩红", "邪恶", "地牢", "墓地", "蜂巢", "神庙",
+    "沙尘暴", "天空", "微光",
+    // 月相
+    "满月", "亏凸月", "下弦月", "残月", "新月", "娥眉月", "上弦月", "盈凸月"
+    }; 
     #endregion
 }

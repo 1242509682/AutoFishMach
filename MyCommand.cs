@@ -58,6 +58,11 @@ internal class MyCommand
                         // 创建新机器，并缓存当前玩家的环境信息
                         var data = new MachData { Owner = plr.Name, Pos = point };
 
+                        // 获取箱子索引并缓存
+                        int chestIdx = Chest.FindChest(point.X, point.Y);
+                        if (chestIdx != -1)
+                            data.ChestIndex = chestIdx;
+
                         // 获取当前玩家的真实环境（使用 TSPlayer 的 TPlayer）
                         var player = plr.TPlayer;
                         data.ZoneCorrupt = player.ZoneCorrupt;
@@ -145,7 +150,7 @@ internal class MyCommand
                     {
                         int baitCount = GetBaitCount(data.Pos);
                         string baitInfo = baitCount > 0 ? $"鱼饵:{baitCount}" : "鱼饵:无";
-                        string rodName = data.FishRod == -1 ? "无" : TShock.Utils.GetItemById(data.FishRod).Name;
+                        string rodName = GetRodName(data); // 动态获取鱼竿名称
 
                         lines.Add(
                             $"{index}.{data.Owner}的钓鱼机 " +
@@ -174,28 +179,17 @@ internal class MyCommand
                     int lavaTiles = 0, honeyTiles = 0;
                     int waterTiles = GetWaterTiles(pos, ref lavaTiles, ref honeyTiles);
 
-                    // 大气因子（根据机器 Y 坐标计算）
+                    // 大气因子
                     int yPos = data.Pos.Y;
-                    float atmo;
-                    if (yPos < Main.worldSurface * 0.5)
-                        atmo = 0.25f;
-                    else if (yPos < Main.worldSurface)
-                        atmo = 0.5f;
-                    else
-                        atmo = 1f;
+                    float atmo = CalculateAtmo(yPos);
 
                     int waterNeeded = (int)(300f * atmo);
                     float waterQuality = Math.Min(1f, (float)waterTiles / waterNeeded);
 
                     // 基础渔力（不含鱼饵，因为鱼饵动态消耗）
                     int basePower = Config.Power;
-                    if (data.FishRod != -1)
-                    {
-                        var rod = new Item();
-                        rod.SetDefaults(data.FishRod);
-                        basePower += rod.fishingPole;
-                    }
-                    basePower += GetBonus(data.Acc); // 饰品加成
+                    basePower += GetRodPower(data); // 动态获取鱼竿渔力
+                    basePower += GetBonus(data); // 饰品加成
 
                     int finalPower = (int)(basePower * waterQuality); // 水体修正后的渔力
 
@@ -203,9 +197,9 @@ internal class MyCommand
                     plr.SendInfoMessage($"{data.Owner}钓鱼机信息:");
 
                     // 原始环境标志
-                    plr.SendMessage($"沙漠:{(data.ZoneDesert?"是":"否")} 雪原:{(data.ZoneSnow?"是":"否")} 丛林:{(data.ZoneJungle?"是":"否")}", color);
-                    plr.SendMessage($"腐化:{(data.ZoneCorrupt?"是":"否")} 猩红:{(data.ZoneCrimson?"是":"否")} 神圣:{(data.ZoneHallow?"是":"否")}", color);
-                    plr.SendMessage($"海洋:{(data.ZoneBeach?"是":"否")} 地牢:{(data.ZoneDungeon?"是":"否")}", color);
+                    plr.SendMessage($"沙漠:{(data.ZoneDesert ? "是" : "否")} 雪原:{(data.ZoneSnow ? "是" : "否")} 丛林:{(data.ZoneJungle ? "是" : "否")}", color);
+                    plr.SendMessage($"腐化:{(data.ZoneCorrupt ? "是" : "否")} 猩红:{(data.ZoneCrimson ? "是" : "否")} 神圣:{(data.ZoneHallow ? "是" : "否")}", color);
+                    plr.SendMessage($"海洋:{(data.ZoneBeach ? "是" : "否")} 地牢:{(data.ZoneDungeon ? "是" : "否")}", color);
 
                     if (data.ZoneCorrupt && data.ZoneCrimson)
                         plr.SendMessage("冲突:同时存在腐化和猩红，实际钓鱼时随机选择其一", color2);
@@ -213,18 +207,46 @@ internal class MyCommand
                         plr.SendMessage("冲突:同时存在丛林和雪地，实际钓鱼时随机选择其一（雪地优先）", color2);
 
                     // 其他环境参数
-                    plr.SendMessage($"高度等级:{GetHeightLevel(data.HeightLevel)}", color);
+                    plr.SendMessage($"高度等级:{GetHeightLevelString(data.HeightLevel)}", color);
                     plr.SendMessage($"大气因子:{atmo:F2}", color);
                     plr.SendMessage($"水体统计: 水{waterTiles} 岩浆:{lavaTiles} 蜂蜜:{honeyTiles}", color);
                     plr.SendMessage($"需水体量:{waterNeeded}", color);
                     plr.SendMessage($"水体质量:{waterQuality:P0}", color);
                     plr.SendMessage($"无饵渔力:{basePower}", color);
                     plr.SendMessage($"含水渔力:{finalPower}", color);
-                    plr.SendMessage($"熔岩钓鱼:{(data.Acc.Any(id => lavaItems.Contains(id)) ? "是" : "否")}", color);
-                    plr.SendMessage($"颠倒海洋:{(data.RolledRemixOcean ? "是":"否")}", color);
+                    plr.SendMessage($"熔岩钓鱼:{(HasItem(data, item => lavaItems.Contains(item.type)) ? "是" : "否")}", color);
+                    plr.SendMessage($"颠倒海洋:{(data.RolledRemixOcean ? "是" : "否")}", color);
+                    // 显示排除物品列表
+                    string excludeText = data.Exclude.Count > 0
+                        ? string.Join(", ", data.Exclude.Select(id => $"{ItemIcon(id, 1)}"))
+                        : "无";
+                    plr.SendMessage($"排除物品: {excludeText}", color);
                 }
                 break;
 
+            case "i":
+            case "item":
+            case "渔获":
+                HandleCustomFish(args);
+                break;
+
+            case "exc":
+            case "exclude":
+            case "排除":
+                HandleExcludeItem(args);
+                break;
+
+            case "cd":
+            case "cond":
+            case "条件":
+                ShowConditions(args);
+                break;
+
+            case "lt":
+            case "loot":
+            case "自定义":
+                ListCustomFishes(args);
+                break;
 
             case "rs":
             case "reset":
@@ -239,15 +261,6 @@ internal class MyCommand
     }
     #endregion
 
-    #region 清空所有数据
-    private static void HandleReset(CommandArgs args)
-    {
-        if (!IsAdmin(args.Player)) return;
-        Clear();
-        args.Player.SendMessage("所有数据已重置", Color.OrangeRed);
-    }
-    #endregion
-
     #region 菜单指令
     private static void Help(CommandArgs args)
     {
@@ -255,7 +268,9 @@ internal class MyCommand
         if (!plr.RealPlayer)
         {
             plr.SendMessage($"《自动钓鱼机》", color);
-            plr.SendMessage($"/{afm} ls - 列出所有机器", color);
+            plr.SendMessage($"/{afm} list - 列出所有自钓机", color);
+            plr.SendMessage($"/{afm} loot - 查看自定渔获", color);
+            plr.SendMessage($"/{afm} cond - 查看自定渔获条件", color);
             plr.SendMessage($"/{afm} reset - 重置插件数据", color);
             plr.SendMessage($"部分指令需进入游戏后查看", color);
         }
@@ -265,30 +280,46 @@ internal class MyCommand
                             "[i:3456][C/F2F2C7:开发] [C/BFDFEA:by] [c/00FFFF:羽学] [i:3459]", color);
 
             var mess = new StringBuilder();
-            mess.AppendLine($"/{afm} set - 选择箱子设为钓鱼机");
-            mess.AppendLine($"/{afm} save - 添加/移除选择的钓鱼机");
-            mess.AppendLine($"/{afm} list - 列出所有机器");
-            mess.AppendLine($"/{afm} info - 获取钓鱼机信息");
+            mess.AppendLine($"/{afm} set - 选择箱子设为自钓机");
+            mess.AppendLine($"/{afm} save - 添加/移除选择的自钓机");
+            mess.AppendLine($"/{afm} list - 列出所有自钓机");
+            mess.AppendLine($"/{afm} info - 获取自钓机信息");
+            mess.AppendLine($"/{afm} loot - 查看自定渔获");
+            mess.AppendLine($"/{afm} exc - 修改排除物品");
             if (IsAdmin(plr))
+            {
+                mess.AppendLine($"/{afm} cond - 查看自定渔获条件");
+                mess.AppendLine($"/{afm} item - 修改自定义渔获");
                 mess.AppendLine($"/{afm} reset - 重置插件数据");
+            }
             GradMess(mess, plr);
         }
     }
     #endregion
 
-    #region 获取高度等级说明
-    private static string GetHeightLevel(int HeightLevel)
+    #region 获取鱼竿名称与鱼力
+    public static string GetRodName(MachData data)
     {
-        switch (HeightLevel)
-        {
-            case 0: return "太空(0)";
-            case 1: return "地表(1)";
-            case 2: return "地下(2)";
-            case 3: return "洞穴(3)";
-            case 4: return "地狱(4)";
-            default: return "未知";
-        }
-    } 
+        if (FindRod(data, out Item rodItem, out _, out _))
+            return rodItem.Name;
+        return "无";
+    }
+
+    public static int GetRodPower(MachData data)
+    {
+        if (FindRod(data, out Item rodItem, out _, out _))
+            return rodItem.fishingPole;
+        return 0;
+    }
+    #endregion
+
+    #region 清空所有数据
+    private static void HandleReset(CommandArgs args)
+    {
+        if (!IsAdmin(args.Player)) return;
+        Clear();
+        args.Player.SendMessage("所有数据已重置", Color.OrangeRed);
+    }
     #endregion
 
     #region 获取鱼饵数量
@@ -329,6 +360,251 @@ internal class MyCommand
 
         plr.SendInfoMessage($"请先使用 /{afm} s 选择图格");
         return false;
+    }
+    #endregion
+
+    #region 管理排除物品列表（存在则移除，不存在则添加）
+    private static void HandleExcludeItem(CommandArgs args)
+    {
+        var plr = args.Player;
+        var pos = plr.TempPoints[0];
+        if (pos == Point.Zero)
+        {
+            plr.SendInfoMessage($"请先使用 /{afm} s 选择钓鱼机箱子");
+            return;
+        }
+
+        var data = Find(pos);
+        if (data == null)
+        {
+            plr.SendErrorMessage("该位置没有钓鱼机");
+            return;
+        }
+
+        // 权限检查：只有机器所有者或管理员可以修改
+        if (!IsAdmin(plr) && data.Owner != plr.Name)
+        {
+            plr.SendErrorMessage("你没有权限修改别人的钓鱼机排除列表");
+            return;
+        }
+
+        if (!plr.RealPlayer)
+        {
+            plr.SendErrorMessage("请进入游戏后手持物品再使用指令");
+            return;
+        }
+
+        var heldItem = plr.SelectedItem;
+        if (heldItem == null || heldItem.type == 0)
+        {
+            plr.SendErrorMessage("请手持一个物品");
+            return;
+        }
+
+        int type = heldItem.type;
+        string name = heldItem.Name;
+        bool isRemove = data.Exclude.Contains(type);
+
+        if (isRemove)
+        {
+            data.Exclude.Remove(type);
+            TShock.Utils.Broadcast($"{data.Owner}的钓鱼机 排除了 {ItemIcon(type, 1)} {name}", color2);
+        }
+        else
+        {
+            data.Exclude.Add(type);
+            TShock.Utils.Broadcast($"{data.Owner}的钓鱼机 添加了排除物品 {ItemIcon(type, 1)} {name}", color2);
+        }
+
+        Save(); // 保存机器数据
+    }
+    #endregion
+
+    #region 根据手持物品管理自定义渔获（管理员）
+    private static void HandleCustomFish(CommandArgs args)
+    {
+        var plr = args.Player;
+        if (!IsAdmin(plr))
+        {
+            plr.SendErrorMessage("你没有权限使用此命令");
+            return;
+        }
+
+        if (!plr.RealPlayer)
+        {
+            plr.SendErrorMessage("请进入游戏后手持物品再使用指令");
+            ItemHelp(plr);
+            return;
+        }
+
+        var heldItem = plr.SelectedItem;
+        if (heldItem == null || heldItem.type == 0)
+        {
+            plr.SendErrorMessage("请手持一个物品");
+            ItemHelp(plr);
+            return;
+        }
+
+        int type = heldItem.type;
+        var existing = Config.CustomFishes.FirstOrDefault(r => r.ItemType == type);
+        string name = heldItem.Name;
+
+        // 如果已存在，则移除
+        if (existing != null)
+        {
+            Config.CustomFishes.Remove(existing);
+            Config.Write();
+            TShock.Utils.Broadcast($"管理员 [c/47D3C3:{plr.Name}] 移除了自定义渔获 [i/s1:{type}] {name}", color);
+            return;
+        }
+
+        // 添加新规则
+        int Denom = 100; // 默认分母 100
+        var conds = new List<string>();
+
+        // 解析参数
+        if (args.Parameters.Count >= 2)
+        {
+            string param = args.Parameters[1];
+            // 尝试解析为整数（概率分母）
+            if (int.TryParse(param, out int denom))
+            {
+                Denom = denom;
+                // 后续参数为条件
+                for (int i = 2; i < args.Parameters.Count; i++)
+                    conds.Add(args.Parameters[i]);
+            }
+            else
+            {
+                // 第一个非数字参数作为条件的一部分
+                conds.Add(param);
+                for (int i = 2; i < args.Parameters.Count; i++)
+                    conds.Add(args.Parameters[i]);
+            }
+        }
+
+        // 去除空条件，合并条件字符串（支持逗号分隔）
+        var final = new List<string>();
+        foreach (var cond in conds)
+        {
+            var parts = cond.Split([',', ' '], StringSplitOptions.RemoveEmptyEntries);
+            foreach (var part in parts)
+            {
+                if (!string.IsNullOrWhiteSpace(part))
+                    final.Add(part.Trim());
+            }
+        }
+
+        var newRule = new CustomFishRule
+        {
+            ItemType = type,
+            ChanceDenominator = Denom,
+            Cond = final
+        };
+        Config.CustomFishes.Add(newRule);
+        Config.Write();
+
+        string condText = final.Count > 0 ? $" 条件: {string.Join(", ", final)}" : "";
+        TShock.Utils.Broadcast($"管理员 [c/47D3C3:{plr.Name}] 添加了自定义渔获 [i/s1:{type}] {name} 概率:1/{Denom}{condText}", color);
+
+        ItemHelp(plr);
+    }
+
+    private static void ItemHelp(TSPlayer plr)
+    {
+        plr.SendMessage($"\n手持物品输入:/{afm} i 20 克眼,困难模式..\n", color);
+        plr.SendMessage($"查看可用进度条件:/{afm} cd", color2);
+        plr.SendMessage($"数字设置概率分母,文字设置进度条件", color2);
+        plr.SendMessage($"无第2参数存在则移除,不在则添加,默认1%概率", color2);
+    }
+    #endregion
+
+    #region 显示所有可用条件（无需权限）
+    private static void ShowConditions(CommandArgs args)
+    {
+        var plr = args.Player;
+        var conds = AllConditions;
+
+        if (conds.Count == 0)
+        {
+            plr.SendInfoMessage("暂无可用条件");
+            return;
+        }
+
+        // 分页显示（每页 10 个）
+        int page = 1;
+        if (args.Parameters.Count > 1 && !int.TryParse(args.Parameters[1], out page))
+            page = 1;
+        if (page < 1) page = 1;
+
+        int perPage = 10;
+        int total = (int)Math.Ceiling(conds.Count / (double)perPage);
+        if (page > total) page = total;
+
+        int start = (page - 1) * perPage;
+        int end = Math.Min(start + perPage, conds.Count);
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"[c/47D3C3:可用条件列表 (第 {page}/{total} 页)]");
+        for (int i = start; i < end; i++)
+        {
+            sb.AppendLine($"[c/55CDFF:•] {conds[i]}");
+        }
+        if (total > 1)
+        {
+            sb.AppendLine($"[c/FFFF00:输入 /{afm} cond {page + 1} 查看下一页]");
+        }
+        plr.SendMessage(sb.ToString(), color);
+    }
+    #endregion
+
+    #region 列出当前自定义渔获（无需权限，支持分页）
+    private static void ListCustomFishes(CommandArgs args)
+    {
+        var plr = args.Player;
+        if (Config.CustomFishes.Count == 0)
+        {
+            plr.SendInfoMessage("暂无自定义渔获");
+            return;
+        }
+
+        int page = 1;
+        if (args.Parameters.Count > 1 && !int.TryParse(args.Parameters[1], out page))
+            page = 1;
+        if (page < 1) page = 1;
+
+        int perPage = 8;
+        int total = (int)Math.Ceiling(Config.CustomFishes.Count / (double)perPage);
+        if (page > total) page = total;
+
+        int start = (page - 1) * perPage;
+        int end = Math.Min(start + perPage, Config.CustomFishes.Count);
+
+        var sb = new StringBuilder();
+        sb.AppendLine($"[c/47D3C3:══ 自定义渔获列表 (第{page}/{total}页) ══]");
+
+        for (int i = start; i < end; i++)
+        {
+            var rule = Config.CustomFishes[i];
+            // 计算百分比： (1 / 分母) * 100
+            double percent = 100.0 / rule.ChanceDenominator;
+            string Display;
+            // 如果百分比是整数，显示整数；否则保留两位小数
+            if (Math.Abs(percent - Math.Round(percent)) < 0.001)
+                Display = Math.Round(percent).ToString();
+            else
+                Display = percent.ToString("F2");
+
+            string condText = rule.Cond.Count > 0 ? $" 条件: {string.Join(", ", rule.Cond)}" : "";
+            sb.AppendLine($"[c/55CDFF:{i + 1:00}.] [i/s1:{rule.ItemType}] " +
+                          $"概率:{Display}%{condText}");
+        }
+
+        if (total > 1)
+        {
+            sb.AppendLine($"[c/FFFF00:输入 /{afm} lt {page + 1} 查看下一页]");
+        }
+        plr.SendMessage(sb.ToString(), color);
     }
     #endregion
 }
