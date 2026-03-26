@@ -140,7 +140,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             saveFrame = frameCounter + Config.SaveInterval;
         }
 
-        if (Config.NeedWiring && frameCounter >= nextFrame)
+        if (!Config.NeedWiring && frameCounter >= nextFrame)
         {
             // 执行所有钓鱼机的钓鱼逻辑
             var all = Machines;
