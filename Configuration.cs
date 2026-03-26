@@ -24,6 +24,10 @@ internal class Configuration
     public string FishInterval { get; set; } = "60,240";
     [JsonProperty("搜索范围格数", Order = 7)]
     public int Range { get; set; } = 62;
+    [JsonProperty("保存间隔帧数", Order = 7)]
+    public int SaveInterval { get; set; } = 600;
+    [JsonProperty("刷新缓存秒数", Order = 7)]
+    public int GetInterval { get; set; } = 30;
     [JsonProperty("鱼匣额外加成", Order = 8)]
     public int CrateChanceBonus { get; set; } = 15;
     [JsonProperty("渔力额外加成", Order = 9)]

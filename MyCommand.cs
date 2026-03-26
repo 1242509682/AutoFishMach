@@ -1,4 +1,5 @@
-﻿using System.Text;
+﻿using System.Security.Policy;
+using System.Text;
 using Microsoft.Xna.Framework;
 using Terraria;
 using Terraria.ID;
@@ -52,7 +53,7 @@ internal class MyCommand
                         return;
                     }
 
-                    var existing = Find(point);
+                    var existing = FindTile(point);
                     if (existing == null)
                     {
                         // 创建新机器，并缓存当前玩家的环境信息
@@ -62,7 +63,7 @@ internal class MyCommand
                         int chestIdx = Chest.FindChest(point.X, point.Y);
                         if (chestIdx == -1)
                         {
-                            // 在 2 格范围内搜索最近的箱子
+                            // 箱子是 2×2，最多偏移 1 格，搜索半径 2 足够
                             int radius = 2;
                             int minX, maxX, minY, maxY;
                             GetCenter(point, radius, out minX, out maxX, out minY, out maxY);
@@ -81,8 +82,19 @@ internal class MyCommand
                                 if (chestIdx != -1) break;
                             }
                         }
-                        else
-                            data.ChestIndex = chestIdx;
+
+                        if (chestIdx == -1)
+                        {
+                            plr.SendErrorMessage("无法找到箱子，请确保点击的是箱子图格");
+                            plr.AwaitingTempPoint = 0;
+                            return;
+                        }
+
+                        // 使用箱子的实际左上角坐标（避免存储非左上角坐标导致移除失败）
+                        var chest = Main.chest[chestIdx];
+                        point = new Point(chest.x, chest.y);
+                        data.Pos = point;
+                        data.ChestIndex = chestIdx;
 
                         // 获取当前玩家的真实环境（使用 TSPlayer 的 TPlayer）
                         var player = plr.TPlayer;
@@ -124,6 +136,10 @@ internal class MyCommand
                                 data.HeightLevel = 4;
                         }
 
+                        // 大气因子
+                        float atmo = GetAtmo(yPos);
+                        data.atmo = atmo;
+
                         // remix 海洋判定（仅在保存时确定一次，世界固定后不再变化）
                         data.RolledRemixOcean = Main.remixWorld && data.HeightLevel == 1 && yPos >= Main.rockLayer && Main.rand.Next(3) == 0;
 
@@ -137,6 +153,16 @@ internal class MyCommand
                             return;
                         }
 
+                        // 仅在保存时水体缓存 不重复计算
+                        data.WatCnt = waterTiles;
+                        data.LavCnt = lavaTiles;
+                        data.HonCnt = honeyTiles;
+
+                        // 查找最近水体坐标（用于钓鱼点缓存）
+                        data.WaterPos = FindWaterInRadius(data.Pos, Config.Range);
+
+                        data.BonusTotal = RefreshCaches(data); // 直接赋值，返回值用于同步
+                        UpdateRodAndBaitCache(data);
                         AddOrUpdate(data);
                         plr.SendMessage(TextGradient($"\n{plr.Name}的自动钓鱼机 ({point.X},{point.Y}) 创建成功! "), color);
                         plr.SendMessage(TextGradient($"附近{Config.Range}格内液体数量:{waterTiles}"), color);
@@ -155,7 +181,7 @@ internal class MyCommand
             case "list":
             case "列表":
                 {
-                    var all = GetAll();
+                    var all = Machines;
                     if (all.Count == 0)
                     {
                         plr.SendInfoMessage("没有自动钓鱼机");
@@ -193,7 +219,7 @@ internal class MyCommand
             case "info":
                 {
                     if (!GetPos(args, out Point pos)) return;
-                    var data = Find(pos);
+                    var data = FindTile(pos);
                     if (data == null) { plr.SendErrorMessage("未找到钓鱼机"); return; }
 
                     // 实时统计水体（水、岩浆、蜂蜜）
@@ -201,8 +227,7 @@ internal class MyCommand
                     int waterTiles = GetWaterTiles(pos, ref lavaTiles, ref honeyTiles);
 
                     // 大气因子
-                    int yPos = data.Pos.Y;
-                    float atmo = CalculateAtmo(yPos);
+                    float atmo = data.atmo;
 
                     int waterNeeded = (int)(300f * atmo);
                     float waterQuality = Math.Min(1f, (float)waterTiles / waterNeeded);
@@ -210,7 +235,7 @@ internal class MyCommand
                     // 基础渔力（不含鱼饵，因为鱼饵动态消耗）
                     int basePower = Config.PowerChanceBonus;
                     basePower += GetRodPower(data); // 动态获取鱼竿渔力
-                    basePower += GetBonus(data); // 饰品加成
+                    basePower += RefreshCaches(data); // 饰品加成
 
                     int finalPower = (int)(basePower * waterQuality); // 水体修正后的渔力
 
@@ -228,7 +253,7 @@ internal class MyCommand
                         plr.SendMessage("冲突:同时存在丛林和雪地，实际钓鱼时随机选择其一（雪地优先）", color2);
 
                     // 其他环境参数
-                    plr.SendMessage($"高度等级:{GetHeightLevelString(data.HeightLevel)}", color);
+                    plr.SendMessage($"高度等级:{GetHeightName(data.HeightLevel)}", color);
                     plr.SendMessage($"大气因子:{atmo:F2}", color);
                     plr.SendMessage($"水体统计: 水{waterTiles} 岩浆:{lavaTiles} 蜂蜜:{honeyTiles}", color);
                     plr.SendMessage($"需水体量:{waterNeeded}", color);
@@ -377,6 +402,31 @@ internal class MyCommand
     }
     #endregion
 
+    #region 计算大气因子
+    public static float GetAtmo(int yPos)
+    {
+        // 原版精确公式
+        float num = (float)Main.maxTilesX / 4200f;
+        num *= num;
+        float atmo = (float)((yPos - (60f + 10f * num)) / (Main.worldSurface / 6.0));
+        if (atmo < 0.25f) atmo = 0.25f;
+        if (atmo > 1f) atmo = 1f;
+        return atmo;
+    }
+    #endregion
+
+    #region 将高度等级转换为可读字符串
+    public static string GetHeightName(int level) => level switch
+    {
+        0 => "太空(0)",
+        1 => "地表(1)",
+        2 => "地下(2)",
+        3 => "洞穴(3)",
+        4 => "地狱(4)",
+        _ => "未知"
+    };
+    #endregion
+
     #region 获取坐标
     private static bool GetPos(CommandArgs args, out Point point)
     {
@@ -401,7 +451,7 @@ internal class MyCommand
             return;
         }
 
-        var data = Find(pos);
+        var data = FindTile(pos);
         if (data == null)
         {
             plr.SendErrorMessage("该位置没有钓鱼机");

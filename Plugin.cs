@@ -18,7 +18,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     public static string PluginName => "自动钓鱼机";
     public override string Name => PluginName;
     public override string Author => "羽学";
-    public override Version Version => new(1, 0, 2);
+    public override Version Version => new(1, 0, 3);
     public override string Description => "使用/afm 指令指定一个箱子作为自动钓鱼机";
     #endregion
 
@@ -37,6 +37,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     public static bool IsAdmin(TSPlayer plr) => plr.HasPermission("afm.admin");
     // 钓鱼掉落规则列表，存储原版所有掉落规则
     private static FishDropRuleList ruleList = new();
+    // 复用玩家对象（避免频繁创建）
+    private static Player sharedPlayer = new();
     #endregion
 
     #region 注册与释放
@@ -47,6 +49,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         ServerApi.Hooks.GamePostInitialize.Register(this, GamePost);
         ServerApi.Hooks.WorldSave.Register(this, OnWorldSave);
         ServerApi.Hooks.GameUpdate.Register(this, OnGameUpdate);
+        GetDataHandlers.ChestItemChange.Register(OnChestItemChange!);
         Commands.ChatCommands.Add(new Command(perm, MyCommand.CmdAfm, afm));
     }
 
@@ -59,6 +62,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             ServerApi.Hooks.GamePostInitialize.Deregister(this, GamePost);
             ServerApi.Hooks.WorldSave.Deregister(this, OnWorldSave);
             ServerApi.Hooks.GameUpdate.Deregister(this, OnGameUpdate);
+            GetDataHandlers.ChestItemChange.UnRegister(OnChestItemChange!);
             Commands.ChatCommands.RemoveAll(x => x.CommandDelegate == MyCommand.CmdAfm);
         }
         base.Dispose(disposing);
@@ -109,36 +113,97 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     #region 游戏更新事件
     private static long nextFrame = 0; // 下一次执行的目标帧数
     private static long frameCounter = 0; // 帧计数器（每次游戏更新+1）
+    private static long saveFrame = 0;
     private void OnGameUpdate(EventArgs args)
     {
         if (!Config.Enabled) return;
 
         frameCounter++;
-        if (frameCounter < nextFrame) return; // 未到执行时间则跳过
+        if (frameCounter >= nextFrame)
+        {
+            // 执行所有钓鱼机的钓鱼逻辑
+            var all = Machines;
+            foreach (var m in all)
+                FishOnce(m);
 
-        // 执行所有钓鱼机的钓鱼逻辑
-        var all = GetAll();
-        foreach (var m in all)
-            FishOnce(m);
+            // 计算下一次执行的帧数间隔（支持随机范围）
+            int min = Config.MinFrames;
+            int max = Config.MaxFrames;
+            int delay = min == max ? min : Main.rand.Next(min, max + 1);
+            nextFrame = frameCounter + delay;
+        }
 
-        // 计算下一次执行的帧数间隔（支持随机范围）
-        int min = Config.MinFrames;
-        int max = Config.MaxFrames;
-        int delay = min == max ? min : Main.rand.Next(min, max + 1);
-        nextFrame = frameCounter + delay;
+        // 定期保存（脏数据）
+        if (frameCounter >= saveFrame)
+        {
+            if (IsDirty) Save();
+            saveFrame = frameCounter + Config.SaveInterval;
+        }
+    }
+    #endregion
+
+    #region 放入物品到自钓箱时自动刷新缓存
+    private void OnChestItemChange(object sender, GetDataHandlers.ChestItemEventArgs e)
+    {
+        if (!Config.Enabled) return;
+
+        // 验证箱子索引有效性
+        if (e.ID < 0 || e.ID >= Main.chest.Length) return;
+        var data = FindChest(e.ID);
+        if (data != null)
+        {
+            if (e.ID == data.ChestIndex)
+            {
+                // 获取当前玩家的真实环境（使用 TSPlayer 的 TPlayer）
+                var plr = e.Player;
+                data.ZoneCorrupt = plr.TPlayer.ZoneCorrupt;
+                data.ZoneCrimson = plr.TPlayer.ZoneCrimson;
+                data.ZoneJungle = plr.TPlayer.ZoneJungle;
+                data.ZoneSnow = plr.TPlayer.ZoneSnow;
+                data.ZoneHallow = plr.TPlayer.ZoneHallow;
+                data.ZoneDesert = plr.TPlayer.ZoneDesert;
+                data.ZoneBeach = plr.TPlayer.ZoneBeach;
+                data.ZoneDungeon = plr.TPlayer.ZoneDungeon;
+
+                int lava = 0, honey = 0;
+                int water = GetWaterTiles(data.Pos, ref lava, ref honey);
+                data.WatCnt = water;
+                data.LavCnt = lava;
+                data.HonCnt = honey;
+                data.WaterPos = FindWaterInRadius(data.Pos, Config.Range); // 刷新水体坐标
+                data.BonusTotal = RefreshCaches(data); // 直接赋值，返回值用于同步
+                UpdateRodAndBaitCache(data);
+                data.CacheTime = DateTime.Now;
+                SetDirty();
+            }
+            else
+            {
+                // 非主箱子变化：如果修改的箱子是鱼竿或鱼饵所在箱子，清除对应缓存
+                if (e.ID == data.RodChest)
+                {
+                    data.RodChest = -1;
+                    data.RodSlot = -1;
+                }
+                if (e.ID == data.BaitChest)
+                {
+                    data.BaitChest = -1;
+                    data.BaitSlot = -1;
+                }
+            }
+        }
     }
     #endregion
 
     #region 挖掉箱子自动移除钓鱼机
     private static void OnKillTile(On.Terraria.WorldGen.orig_KillTile orig, int x, int y, bool fail, bool effectOnly, bool noItem)
     {
-        if (!Config.Enabled)
+        if (Config.Enabled)
         {
-            orig(x, y, fail, effectOnly, noItem);
-            return;
+            var pos = new Point(x, y);
+            if (FindTile(pos) != null)
+                Remove(pos);
         }
 
-        Remove(new Point(x, y)); // 尝试移除该坐标的钓鱼机
         orig(x, y, fail, effectOnly, noItem);
     }
     #endregion
@@ -152,9 +217,9 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             if (!FindRod(data, out Item rodItem, out Chest rodChest, out int rodSlot))
             {
                 if (Config.Broadcast &&
-                    (DateTime.Now - data.lastMissingWarning).TotalSeconds > Config.BC_CoolDown)
+                    (DateTime.Now - data.lastRodWarning).TotalSeconds > Config.BC_CoolDown)
                 {
-                    data.lastMissingWarning = DateTime.Now;
+                    data.lastRodWarning = DateTime.Now;
                     TShock.Utils.Broadcast($"\n{data.Owner}的钓鱼机缺少鱼竿，请放入鱼竿", color2);
                     TShock.Utils.Broadcast($"传送到钓鱼机:/tppos {data.Pos.X} {data.Pos.Y}", color2);
                 }
@@ -165,9 +230,9 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             if (!FindBait(data, out Item baitItem, out Chest baitChest, out int baitSlot))
             {
                 if (Config.Broadcast &&
-                    (DateTime.Now - data.lastMissingWarning).TotalSeconds > Config.BC_CoolDown)
+                    (DateTime.Now - data.lastBaitWarning).TotalSeconds > Config.BC_CoolDown)
                 {
-                    data.lastMissingWarning = DateTime.Now;
+                    data.lastBaitWarning = DateTime.Now;
                     TShock.Utils.Broadcast($"\n{data.Owner}的钓鱼机缺少鱼饵，请放入鱼饵", color2);
                     TShock.Utils.Broadcast($"传送到钓鱼机:/tppos {data.Pos.X} {data.Pos.Y}", color2);
                 }
@@ -185,7 +250,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             // 计算渔力 = 鱼竿渔力 + 鱼饵渔力 + 额外加成 + 饰品加成
             int Power = rodItem.fishingPole + baitItem.bait;
             if (Config.PowerChanceBonus > 0) Power += Config.PowerChanceBonus;
-            Power += GetBonus(data);
+            Power += data.BonusTotal; // 直接使用缓存
 
             // 消耗鱼饵（概率）
             if (ConsumeBait(baitChest, data, baitSlot, baitItem, Power))
@@ -212,8 +277,42 @@ public class Plugin(Main game) : TerrariaPlugin(game)
 
                 if (data.Exclude.Contains(fish.type)) return;
 
-                // 直接尝试放入附近箱子
-                TryDeposit(data, fish);
+                // 尝试放入钓鱼箱
+                Vector2 from = new Vector2(data.WaterPos.X * 16 + 8, data.WaterPos.Y * 16 + 8);
+                Point pos = data.Pos;
+                int idx = data.ChestIndex;
+                if (idx != -1)
+                {
+                    var chest = Main.chest[idx];
+                    for (int s = 0; s < chest.item.Length; s++)
+                    {
+                        if (chest.item[s].IsAir)
+                        {
+                            chest.item[s] = fish.Clone();
+                            Transfer(from, pos.X, pos.Y, idx, s, fish.type);
+                            break; // 放入后立即退出
+                        }
+                        else if (chest.item[s].type == fish.type && chest.item[s].stack < chest.item[s].maxStack)
+                        {
+                            chest.item[s].stack++;
+                            Transfer(from, pos.X, pos.Y, idx, s, fish.type);
+                            break; // 放入后立即退出
+                        }
+                    }
+                }
+
+                // 刷新缓存（30秒）
+                if ((DateTime.Now - data.CacheTime).TotalSeconds > Config.GetInterval)
+                {
+                    int lava = 0, honey = 0;
+                    int water = GetWaterTiles(data.Pos, ref lava, ref honey);
+                    data.WatCnt = water;
+                    data.LavCnt = lava;
+                    data.HonCnt = honey;
+                    data.WaterPos = FindWaterInRadius(data.Pos, Config.Range); // 刷新水体坐标
+                    data.BonusTotal = RefreshCaches(data); // 直接赋值，返回值用于同步
+                    data.CacheTime = DateTime.Now;
+                }
             }
         }
         catch (Exception ex)
@@ -224,12 +323,103 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     #endregion
 
     #region 从箱子获取鱼饵与鱼竿方法
-    private static bool FindBait(MachData data, out Item baitItem, out Chest chest, out int slot) =>
-        FindItem(data, item => item.bait > 0, out baitItem, out chest, out slot);
-    public static bool FindRod(MachData data, out Item rodItem, out Chest chest, out int slot) =>
-        FindItem(data, item => item.fishingPole > 0, out rodItem, out chest, out slot);
-    public static bool HasItem(MachData data, Func<Item, bool> predicate) =>
-        FindItem(data, predicate, out _, out _, out _);
+    private static bool FindBait(MachData data, out Item baitItem, out Chest chest, out int slot)
+    {
+        // 优先使用缓存
+        if (data.BaitChest != -1 && data.BaitSlot != -1)
+        {
+            var cachedChest = Main.chest[data.BaitChest];
+            if (cachedChest != null)
+            {
+                var item = cachedChest.item[data.BaitSlot];
+                if (item != null && !item.IsAir && item.bait > 0)
+                {
+                    baitItem = item;
+                    chest = cachedChest;
+                    slot = data.BaitSlot;
+                    return true;
+                }
+            }
+            // 缓存无效，清除
+            data.BaitChest = -1;
+            data.BaitSlot = -1;
+        }
+
+        // 回退到扫描
+        if (FindItem(data, item => item.bait > 0, out baitItem, out chest, out slot))
+        {
+            // 更新缓存
+            data.BaitChest = chest.index;
+            data.BaitSlot = slot;
+            return true;
+        }
+
+        return false;
+    }
+
+    public static bool FindRod(MachData data, out Item rodItem, out Chest chest, out int slot)
+    {
+        // 优先使用缓存
+        if (data.RodChest != -1 && data.RodSlot != -1)
+        {
+            var cachedChest = Main.chest[data.RodChest];
+            if (cachedChest != null)
+            {
+                var item = cachedChest.item[data.RodSlot];
+                if (item != null && !item.IsAir && item.fishingPole > 0)
+                {
+                    rodItem = item;
+                    chest = cachedChest;
+                    slot = data.RodSlot;
+                    return true;
+                }
+            }
+            // 缓存无效，清除
+            data.RodChest = -1;
+            data.RodSlot = -1;
+        }
+
+        // 回退到扫描
+        if (FindItem(data, item => item.fishingPole > 0, out rodItem, out chest, out slot))
+        {
+            // 更新缓存
+            data.RodChest = chest.index;
+            data.RodSlot = slot;
+            return true;
+        }
+        return false;
+    }
+
+    #region 更新鱼竿/鱼饵缓存（通常在创建机器或箱子变化时调用）
+    public static void UpdateRodAndBaitCache(MachData data)
+    {
+        // 尝试重新查找鱼竿并缓存
+        if (FindItem(data, item => item.fishingPole > 0, out _, out Chest rodChest, out int rodSlot))
+        {
+            data.RodChest = rodChest.index;
+            data.RodSlot = rodSlot;
+        }
+        else
+        {
+            data.RodChest = -1;
+            data.RodSlot = -1;
+        }
+
+        // 尝试重新查找鱼饵并缓存
+        if (FindItem(data, item => item.bait > 0, out _, out Chest baitChest, out int baitSlot))
+        {
+            data.BaitChest = baitChest.index;
+            data.BaitSlot = baitSlot;
+        }
+        else
+        {
+            data.BaitChest = -1;
+            data.BaitSlot = -1;
+        }
+    }
+    #endregion
+
+    public static bool HasItem(MachData data, Func<Item, bool> predicate) => FindItem(data, predicate, out _, out _, out _);
 
     // 在钓鱼机附近查找符合条件的物品（鱼竿或鱼饵、加成物品）
     private static bool FindItem(MachData data, Func<Item, bool> predicate, out Item foundItem, out Chest chest, out int slot)
@@ -238,7 +428,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         chest = new();
         slot = -1;
 
-        // 1. 优先使用缓存的箱子索引
+        // 优先使用缓存的箱子索引
         if (data.ChestIndex != -1)
         {
             var cachedChest = Main.chest[data.ChestIndex];
@@ -258,17 +448,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             }
         }
 
-        // 2. 回退到渐进半径搜索
-        int radius = 2;
-        int maxRadius = Config.Range;
-        while (radius <= maxRadius)
-        {
-            if (TryFindItem(data.Pos, radius, predicate, out foundItem, out chest, out slot))
-                return true;
-            radius += 2;
-        }
-
-        return false;
+        // 一次扫描整个范围（不再渐进）
+        return TryFindItem(data.Pos, Config.Range, predicate, out foundItem, out chest, out slot);
     }
 
     // 在指定半径内查找符合条件的物品
@@ -329,6 +510,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             if (baitItem.stack <= 0)
             {
                 baitItem.TurnToAir();
+                data.BaitChest = -1;
+                data.BaitSlot = -1;
             }
             // 同步箱子更新到客户端
             NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, slot);
@@ -338,12 +521,9 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     }
     #endregion
 
-    #region 创建钓鱼对象信息
-    public static int[] lavaItems = [ItemID.LavaFishingHook, ItemID.LavaproofTackleBag, ItemID.HotlineFishingHook];
-    private static FishingContext BuildFishingContext(MachData data, int fishingPower, Item rodItem, Item baitItem)
+    #region 设置玩家环境（复用）
+    private static void SetupPlayer(Player plr, MachData data)
     {
-        // 创建临时玩家并设置位置，用于原版规则中的 Zone 判断(解决环境匣掉落问题)
-        var plr = new Player();
         plr.position = new Vector2(data.Pos.X * 16, data.Pos.Y * 16);
         plr.UpdateBiomes();
         plr.ZoneCorrupt = data.ZoneCorrupt;
@@ -353,7 +533,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         plr.ZoneHallow = data.ZoneHallow;
         plr.ZoneDesert = data.ZoneDesert;
         plr.ZoneBeach = data.ZoneBeach;
-        plr.ZoneRain = true; // 下雨加成 默认打开
+        plr.ZoneRain = true;
 
         // 高度等级
         plr.ZoneSkyHeight = data.HeightLevel == 0;
@@ -361,18 +541,27 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         plr.ZoneDirtLayerHeight = data.HeightLevel == 2;
         plr.ZoneRockLayerHeight = data.HeightLevel == 3;
         plr.ZoneUnderworldHeight = data.HeightLevel == 4;
-        int heightLevel = GetHeightLevel(plr);
+    }
+    #endregion
+
+    #region 创建钓鱼对象信息
+    public static int[] lavaItems = [ItemID.LavaFishingHook, ItemID.LavaproofTackleBag, ItemID.HotlineFishingHook];
+    private static FishingContext BuildFishingContext(MachData data, int fishingPower, Item rodItem, Item baitItem)
+    {
+        // 临时玩家并设置位置，用于原版规则中的 Zone 判断(解决环境匣掉落问题)
+        SetupPlayer(sharedPlayer, data);
+        int heightLevel = data.HeightLevel;
         if (Main.remixWorld && heightLevel == 2 && Main.rand.Next(2) == 0)
             heightLevel = 1;
 
         // 环境冲突处理（每次钓鱼时随机决定）
-        bool corruption = plr.ZoneCorrupt;
-        bool crimson = plr.ZoneCrimson;
-        bool jungle = plr.ZoneJungle;
-        bool snow = plr.ZoneSnow;
-        bool hallow = plr.ZoneHallow;
-        bool desert = plr.ZoneDesert;
-        bool Beach = plr.ZoneBeach;
+        bool corruption = sharedPlayer.ZoneCorrupt;
+        bool crimson = sharedPlayer.ZoneCrimson;
+        bool jungle = sharedPlayer.ZoneJungle;
+        bool snow = sharedPlayer.ZoneSnow;
+        bool hallow = sharedPlayer.ZoneHallow;
+        bool desert = sharedPlayer.ZoneDesert;
+        bool Beach = sharedPlayer.ZoneBeach;
         bool rolledRemixOcean = data.RolledRemixOcean;
 
         if (corruption && crimson)
@@ -389,24 +578,26 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         bool infectedDesert = desert && (corruption || crimson || hallow);
 
         // 水体统计
-        int lavaTiles = 0, honeyTiles = 0;
-        int waterTiles = GetWaterTiles(data.Pos, ref lavaTiles, ref honeyTiles);
+        int waterTiles = data.WatCnt, lavaTiles = data.LavCnt, honeyTiles = data.HonCnt;
         // 特殊世界蜂蜜修正
-        if (Main.notTheBeesWorld && Main.rand.Next(2) == 0)
-            honeyTiles = 0;
+        if (Main.notTheBeesWorld && Main.rand.Next(2) == 0) honeyTiles = 0;
 
         // 大气因子
-        int yPos = data.Pos.Y;
-        float atmo = CalculateAtmo(yPos);
+        float atmo = data.atmo;
 
+        // 需要水体
         int waterNeeded = (int)(300f * atmo);
+
+        // 水体质量
         float waterQuality = Math.Min(1f, (float)waterTiles / waterNeeded);
+
+        // 根据水体质量降低鱼力
         if (waterQuality < 1f)
             fishingPower = (int)(fishingPower * waterQuality);
 
         // 稀有度标志
         bool junk = Main.rand.Next(50) > fishingPower && Main.rand.Next(50) > fishingPower && waterTiles < waterNeeded;
-        bool hasCratePotion = HasItem(data, item => item.type == ItemID.CratePotion);
+        bool hasCratePotion = data.HasCratePotion;
         bool common, uncommon, rare, veryrare, legendary, crate;
         FishingCheck_RollDropLevels(fishingPower, hasCratePotion, out common, out uncommon, out rare, out veryrare, out legendary, out crate);
 
@@ -416,16 +607,16 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             questFish = Main.anglerQuestItemNetIDs[Main.anglerQuest];
 
         // 熔岩钓鱼完整判定（鱼竿、鱼饵、饰品）
-        bool canFishInLava = ItemID.Sets.CanFishInLava[rodItem.type] ||
-                             ItemID.Sets.IsLavaBait[baitItem.type] ||
-                             HasItem(data, item => lavaItems.Contains(item.type));
+        bool canFishInLava = data.CanFishInLava ||
+                             ItemID.Sets.CanFishInLava[rodItem.type] ||
+                             ItemID.Sets.IsLavaBait[baitItem.type];
 
         // 构建上下文
         var fc = new FishingContext
         {
             Random = new Terraria.Utilities.UnifiedRandom(Main.rand.Next()),
             Fisher = new FishingAttempt(),
-            Player = plr,
+            Player = sharedPlayer,
             RolledCorruption = corruption,
             RolledCrimson = crimson,
             RolledJungle = jungle,
@@ -454,8 +645,9 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         fc.Fisher.CanFishInLava = canFishInLava;
         return fc;
     }
+    #endregion
 
-    // 原版稀有度计算（参考 FishingCheck_RollDropLevels）
+    #region 原版稀有度计算（参考 FishingCheck_RollDropLevels）
     private static void FishingCheck_RollDropLevels(int fishingLevel, bool hasCratePotion, out bool common, out bool uncommon, out bool rare, out bool veryrare, out bool legendary, out bool crate)
     {
 
@@ -488,21 +680,49 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     }
     #endregion
 
-    #region 计算大气因子
-    public static float CalculateAtmo(int yPos)
+    #region 刷新鱼力加成、宝匣药水、岩浆钓鱼缓存
+    public static int RefreshCaches(MachData data)
     {
-        // 原版精确公式
-        float num = (float)Main.maxTilesX / 4200f;
-        num *= num;
-        float atmo = (float)((yPos - (60f + 10f * num)) / (Main.worldSurface / 6.0));
-        if (atmo < 0.25f) atmo = 0.25f;
-        if (atmo > 1f) atmo = 1f;
-        return atmo;
+        int total = 0;
+        data.HasCratePotion = false;
+        data.CanFishInLava = false;
+
+        if (data.ChestIndex != -1)
+        {
+            var chest = Main.chest[data.ChestIndex];
+            if (chest != null && chest.x == data.Pos.X && chest.y == data.Pos.Y)
+            {
+                foreach (var item in chest.item)
+                {
+                    if (item == null || item.IsAir) continue;
+
+                    if (Config.CustomPowerItems.TryGetValue(item.type, out int power))
+                        total += power;
+
+                    if (item.type == ItemID.CratePotion)
+                        data.HasCratePotion = true;
+
+                    if (lavaItems.Contains(item.type))
+                        data.CanFishInLava = true;
+                }
+            }
+        }
+
+        data.BonusTotal = total;
+        return total;
     }
     #endregion
 
-    #region 获取水体数量
-    // 统计指定坐标周围一定半径内的液体数量（水、岩浆、蜂蜜）
+    #region 物品进箱动画
+    private static void Transfer(Vector2 from, int x, int y, int ci, int slot, int itemType)
+    {
+        NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, ci, slot);
+        Vector2 to = new(x * 16 + 8, y * 16 + 8);
+        Chest.VisualizeChestTransfer(from, to, itemType, Chest.ItemTransferVisualizationSettings.Hopper);
+    }
+    #endregion
+
+    #region 获取水体数量（统计指定坐标周围一定半径内的液体数量（水、岩浆、蜂蜜））
     public static int GetWaterTiles(Point pos, ref int lava, ref int honey)
     {
         // 缓存当前水体数量 避免重复计算
@@ -527,165 +747,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     }
     #endregion
 
-    #region 获取高度等级
-    public static int GetHeightLevel(Player plr)
-    {
-        if (plr.ZoneSkyHeight)
-            return 0;
-        if (plr.ZoneOverworldHeight)
-            return 1;
-        if (plr.ZoneDirtLayerHeight)
-            return 2;
-        if (plr.ZoneRockLayerHeight)
-            return 3;
-        if (plr.ZoneUnderworldHeight)
-            return 4;
-
-        return 0; // 默认太空
-    }
-
-    // 将高度等级转换为可读字符串
-    public static string GetHeightLevelString(int level) => level switch
-    {
-        0 => "太空(0)",
-        1 => "地表(1)",
-        2 => "地下(2)",
-        3 => "洞穴(3)",
-        4 => "地狱(4)",
-        _ => "未知"
-    };
-    #endregion
-
-    #region 获取额外鱼力
-    public static int GetBonus(MachData data)
-    {
-        int total = 0;
-        if (data.ChestIndex != -1)
-        {
-            var chest = Main.chest[data.ChestIndex];
-            if (chest != null && chest.x == data.Pos.X && chest.y == data.Pos.Y)
-            {
-                foreach (var item in chest.item)
-                {
-                    if (item != null && !item.IsAir && Config.CustomPowerItems.TryGetValue(item.type, out int power))
-                    {
-                        total += power;
-                    }
-                }
-            }
-        }
-
-        return total;
-    }
-    #endregion
-
-    #region 物品进箱动画
-    private static void TryDeposit(MachData data, Item i)
-    {
-        Vector2 from = FindFishingSpot(data.Pos);
-        Point pos = data.Pos;
-
-        // 1. 先尝试放入钓鱼箱
-        int idx = data.ChestIndex;
-        if (idx != -1 && TryPutInChest(Main.chest[idx], pos.X, pos.Y, idx, from, i))
-            return;
-
-        // 2. 渐进式搜索附近箱子（半径从2开始，每次增加2，直到Config.Range）
-        int radius = 2;
-        int step = 2;
-        int maxRadius = Config.Range;
-
-        while (radius <= maxRadius)
-        {
-            if (TryFindAndPutInNearbyChest(pos, radius, from, i))
-                return;
-            radius += step;
-        }
-    }
-
-    /// <summary>
-    /// 尝试将物品放入指定箱子，成功返回true
-    /// </summary>
-    private static bool TryPutInChest(Chest chest, int chestX, int chestY, int chestIdx, Vector2 from, Item item)
-    {
-        for (int s = 0; s < chest.item.Length; s++)
-        {
-            if (chest.item[s].IsAir)
-            {
-                chest.item[s] = item.Clone();
-                Transfer(from, chestX, chestY, chestIdx, s, item.type);
-                return true;
-            }
-            else if (chest.item[s].type == item.type && chest.item[s].stack < chest.item[s].maxStack)
-            {
-                chest.item[s].stack++;
-                Transfer(from, chestX, chestY, chestIdx, s, item.type);
-                return true;
-            }
-        }
-        return false;
-    }
-
-    /// <summary>
-    /// 在指定半径内搜索可用的箱子，并尝试放入物品
-    /// </summary>
-    private static bool TryFindAndPutInNearbyChest(Point center, int radius, Vector2 from, Item item)
-    {
-        int minX, maxX, minY, maxY;
-        GetCenter(center, radius, out minX, out maxX, out minY, out maxY);
-
-        for (int x = minX; x <= maxX; x++)
-            for (int y = minY; y <= maxY; y++)
-            {
-                // 跳过钓鱼箱本身（已在第一步处理）
-                if (x == center.X && y == center.Y) continue;
-
-                int ci = Chest.FindChest(x, y);
-                if (ci == -1) continue;
-
-                var chest = Main.chest[ci];
-                if (TryPutInChest(chest, chest.x, chest.y, ci, from, item))
-                    return true;
-            }
-        
-        return false;
-    }
-
-    // 播放物品转移动画并同步箱子内容
-    private static void Transfer(Vector2 from, int x, int y, int ci, int slot, int itemType)
-    {
-        NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, ci, slot);
-        Vector2 to = new(x * 16 + 8, y * 16 + 8);
-        Chest.VisualizeChestTransfer(from, to, itemType, Chest.ItemTransferVisualizationSettings.Hopper);
-    }
-
-    // 寻找钓鱼点（返回世界坐标）- 渐进式搜索
-    private static Vector2 FindFishingSpot(Point pos)
-    {
-        // 从 2 格开始，每次增加 2 格，直到 Config.Range
-        int radius = 2;
-        int step = 2;
-        int maxRadius = Config.Range;
-
-        while (radius <= maxRadius)
-        {
-            Point best = FindWaterInRadius(pos, radius);
-            if (best != Point.Zero)
-            {
-                // 返回水体图格的中心坐标（水下）
-                return new Vector2(best.X * 16 + 8, best.Y * 16 + 8);
-            }
-            radius += step;
-        }
-
-        // 没找到水，返回机器坐标
-        return new Vector2(pos.X * 16 + 8, pos.Y * 16 + 8);
-    }
-
-    /// <summary>
-    /// 在指定半径内查找最近的水体图格（返回第一个找到的）
-    /// </summary>
-    private static Point FindWaterInRadius(Point center, int radius)
+    #region 获取水体坐标
+    public static Point FindWaterInRadius(Point center, int radius)
     {
         int minX, maxX, minY, maxY;
         GetCenter(center, radius, out minX, out maxX, out minY, out maxY);
@@ -717,29 +780,12 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     private static void CustomFishes(MachData data, Item rodItem, ref bool noSapwn)
     {
         // 创建临时玩家，用于条件判断中的环境检查（如生物群落）
-        var plr = new Player();
-        plr.position = new Vector2(data.Pos.X * 16, data.Pos.Y * 16);
-        plr.UpdateBiomes();
-        plr.ZoneCorrupt = data.ZoneCorrupt;
-        plr.ZoneCrimson = data.ZoneCrimson;
-        plr.ZoneJungle = data.ZoneJungle;
-        plr.ZoneSnow = data.ZoneSnow;
-        plr.ZoneHallow = data.ZoneHallow;
-        plr.ZoneDesert = data.ZoneDesert;
-        plr.ZoneBeach = data.ZoneBeach;
-        plr.ZoneRain = true; // 下雨加成 默认打开
-
-        // 高度等级
-        plr.ZoneSkyHeight = data.HeightLevel == 0;
-        plr.ZoneOverworldHeight = data.HeightLevel == 1;
-        plr.ZoneDirtLayerHeight = data.HeightLevel == 2;
-        plr.ZoneRockLayerHeight = data.HeightLevel == 3;
-        plr.ZoneUnderworldHeight = data.HeightLevel == 4;
+        SetupPlayer(sharedPlayer, data);
 
         foreach (var rule in Config.CustomFishes)
         {
             // 检查条件（如果配置了条件）
-            if (rule.Cond.Count > 0 && !Utils.CheckConds(rule.Cond, plr))
+            if (rule.Cond.Count > 0 && !Utils.CheckConds(rule.Cond, sharedPlayer))
                 continue;
 
             // 鱼饵投掷者概率加成：概率分母减半
@@ -757,11 +803,9 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                 if (!Config.EnableCustomNPC)
                     continue; // 跳过此规则，继续处理下一条
 
-                // 实时统计水体（用于敌怪生成判断）
-                int lavaTiles = 0, honeyTiles = 0;
-                int waterTiles = GetWaterTiles(data.Pos, ref lavaTiles, ref honeyTiles);
-                bool inLava = lavaTiles > 0;
-                bool inHoney = honeyTiles > 0;
+                // 统计水体（用于敌怪生成判断）
+                bool inLava = data.LavCnt > 0;
+                bool inHoney = data.HonCnt > 0;
 
                 // 检查附近是否有玩家（否则NPC会消失）
                 if (!IsAnyPlayerNearby(data.Pos, Config.Range))
@@ -771,7 +815,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                 if (inLava || inHoney)
                     continue;
 
-                Vector2 spawnPos = FindFishingSpot(data.Pos);
+                Vector2 spawnPos = new Vector2(data.WaterPos.X * 16 + 8, data.WaterPos.Y * 16 + 8);
 
                 // 独立怪物检查
                 if (Config.SoloCustomMonster)
@@ -782,9 +826,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                         .Select(r => r.NPCType)
                         .ToHashSet();
 
-                    bool duplicate = false;
-
                     // 在 Config.Range 范围内检查是否存在任何自定义怪物
+                    bool duplicate = false;
                     for (int i = 0; i < Main.maxNPCs; i++)
                     {
                         var npc = Main.npc[i];
@@ -804,7 +847,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                     if (duplicate)
                         continue; // 已有一个怪物，跳过本次生成
                 }
-                
+
                 int npcIndex = NPC.NewNPC(null, (int)spawnPos.X, (int)spawnPos.Y, rule.NPCType);
                 if (npcIndex >= 0)
                 {
@@ -831,8 +874,29 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                 custom.SetDefaults(rule.ItemType);
                 custom.stack = 1;
 
-                // 尝试放入附近箱子
-                TryDeposit(data, custom);
+                // 尝试放入钓鱼箱
+                Vector2 from = new Vector2(data.WaterPos.X * 16 + 8, data.WaterPos.Y * 16 + 8);
+                Point pos = data.Pos;
+                int idx = data.ChestIndex;
+                if (idx != -1)
+                {
+                    var chest = Main.chest[idx];
+                    for (int s = 0; s < chest.item.Length; s++)
+                    {
+                        if (chest.item[s].IsAir)
+                        {
+                            chest.item[s] = custom.Clone();
+                            Transfer(from, pos.X, pos.Y, idx, s, custom.type);
+                            break; // 放入后立即退出
+                        }
+                        else if (chest.item[s].type == custom.type && chest.item[s].stack < chest.item[s].maxStack)
+                        {
+                            chest.item[s].stack++;
+                            Transfer(from, pos.X, pos.Y, idx, s, custom.type);
+                            break; // 放入后立即退出
+                        }
+                    }
+                }
 
                 if (Config.Broadcast)
                     TShock.Utils.Broadcast($"{data.Owner}的钓鱼机 额外钓到了 {ItemIcon(custom.type, custom.stack)} 坐标:{data.Pos.X} {data.Pos.Y}", color2);

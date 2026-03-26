@@ -33,11 +33,43 @@ public class MachData
     [JsonProperty("颠倒海洋")]
     public bool RolledRemixOcean { get; set; }
 
-    [JsonIgnore]
-    public DateTime lastMissingWarning = DateTime.MinValue;
-
+    [JsonProperty("水体数量")]
+    public int WatCnt { get; set; }
+    [JsonProperty("岩浆数量")]
+    public int LavCnt { get; set; }
+    [JsonProperty("蜂蜜数量")]
+    public int HonCnt { get; set; }
+    [JsonProperty("大气因子")]
+    public float atmo { get; set; }
+    [JsonProperty("最近水体坐标")]
+    public Point WaterPos { get; set; } = new Point(-1, -1);
+    [JsonProperty("额外渔力总和")]
+    public int BonusTotal { get; set; }
     [JsonProperty("排除物品")]
     public List<int> Exclude { get; set; } = new();
+
+    // 新增：鱼竿/鱼饵槽位缓存（仅用于运行时，不保存）
+    [JsonIgnore]
+    public int RodChest { get; set; } = -1;
+    [JsonIgnore]
+    public int RodSlot { get; set; } = -1;
+    [JsonIgnore]
+    public DateTime lastRodWarning = DateTime.MinValue;
+
+    [JsonIgnore]
+    public int BaitChest { get; set; } = -1;
+    [JsonIgnore]
+    public int BaitSlot { get; set; } = -1;
+    [JsonIgnore]
+    public DateTime lastBaitWarning = DateTime.MinValue;
+
+    [JsonIgnore]
+    public bool HasCratePotion { get; set; }
+    [JsonIgnore]
+    public bool CanFishInLava { get; set; }
+
+    [JsonIgnore]
+    public DateTime CacheTime { get; set; }
 
     public MachData() { }
 }
