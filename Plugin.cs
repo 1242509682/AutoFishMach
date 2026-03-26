@@ -18,7 +18,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     public static string PluginName => "自动钓鱼机";
     public override string Name => PluginName;
     public override string Author => "羽学";
-    public override Version Version => new(1, 0, 1);
+    public override Version Version => new(1, 0, 2);
     public override string Description => "使用/afm 指令指定一个箱子作为自动钓鱼机";
     #endregion
 
@@ -81,6 +81,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
 
             Config = Configuration.Read(); // 读取配置（内部会创建默认配置）
             Config.ParseFrames(); // 解析钓鱼间隔字符串（如 "60" 或 "60,180"）
+            Config.AutoDesc(); // 自动描述
             Config.Write(); // 写回（确保配置存在）
 
             ruleList = new FishDropRuleList();
@@ -150,7 +151,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             // 1. 查找鱼竿
             if (!FindRod(data, out Item rodItem, out Chest rodChest, out int rodSlot))
             {
-                if ((DateTime.Now - data.lastMissingWarning).TotalSeconds > Config.Warning)
+                if (Config.Broadcast &&
+                    (DateTime.Now - data.lastMissingWarning).TotalSeconds > Config.BC_CoolDown)
                 {
                     data.lastMissingWarning = DateTime.Now;
                     TShock.Utils.Broadcast($"\n{data.Owner}的钓鱼机缺少鱼竿，请放入鱼竿", color2);
@@ -162,7 +164,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             // 2. 查找鱼饵
             if (!FindBait(data, out Item baitItem, out Chest baitChest, out int baitSlot))
             {
-                if ((DateTime.Now - data.lastMissingWarning).TotalSeconds > Config.Warning)
+                if (Config.Broadcast &&
+                    (DateTime.Now - data.lastMissingWarning).TotalSeconds > Config.BC_CoolDown)
                 {
                     data.lastMissingWarning = DateTime.Now;
                     TShock.Utils.Broadcast($"\n{data.Owner}的钓鱼机缺少鱼饵，请放入鱼饵", color2);
@@ -181,37 +184,36 @@ public class Plugin(Main game) : TerrariaPlugin(game)
 
             // 计算渔力 = 鱼竿渔力 + 鱼饵渔力 + 额外加成 + 饰品加成
             int Power = rodItem.fishingPole + baitItem.bait;
-            if (Config.Power > 0) Power += Config.Power;
+            if (Config.PowerChanceBonus > 0) Power += Config.PowerChanceBonus;
             Power += GetBonus(data);
 
             // 消耗鱼饵（概率）
             if (ConsumeBait(baitChest, data, baitSlot, baitItem, Power))
             {
+                var noSpawn = false;
+
+                // 添加自定义渔获判定
+                if (Config.CustomFishes.Any())
+                    CustomFishes(data, rodItem, ref noSpawn);
+
+                // 如果自定义渔获成功则跳过原版渔获
+                if (noSpawn) return;
+
                 // 构建钓鱼上下文（包含环境、高度、稀有度等）
                 var context = BuildFishingContext(data, Power, rodItem, baitItem);
                 // 根据上下文从规则列表中获取掉落的物品类型
                 int itemType = ruleList.TryGetItemDropType(context);
-                if (itemType != 0)
-                {
-                    // 初始化掉落物物品
-                    var fish = new Item();
-                    fish.SetDefaults(itemType);
-                    fish.stack = 1;
+                if (itemType == 0) return;
 
-                    if (data.Exclude.Contains(fish.type)) return;
+                // 初始化掉落物物品
+                var fish = new Item();
+                fish.SetDefaults(itemType);
+                fish.stack = 1;
 
-                    // 直接尝试放入附近箱子
-                    TryDeposit(data, fish);
+                if (data.Exclude.Contains(fish.type)) return;
 
-                    if (Config.Broadcast)
-                        TShock.Utils.Broadcast($"{data.Owner}的钓鱼机 钓到了 {ItemIcon(fish.type, fish.stack)} 坐标:{data.Pos.X} {data.Pos.Y}", color2);
-                }
-
-                // 添加自定义渔获判定
-                if (Config.CustomFishes.Any())
-                {
-                    CustomFishes(data);
-                }
+                // 直接尝试放入附近箱子
+                TryDeposit(data, fish);
             }
         }
         catch (Exception ex)
@@ -276,10 +278,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         chest = new();
         slot = -1;
 
-        int minX = Math.Max(center.X - radius, 0);
-        int maxX = Math.Min(center.X + radius, Main.maxTilesX - 1);
-        int minY = Math.Max(center.Y - radius, 0);
-        int maxY = Math.Min(center.Y + radius, Main.maxTilesY - 1);
+        int minX, maxX, minY, maxY;
+        GetCenter(center, radius, out minX, out maxX, out minY, out maxY);
 
         for (int x = minX; x <= maxX; x++)
         {
@@ -316,7 +316,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         if (chest.x < 0 || chest.x >= Main.maxTilesX || chest.y < 0 || chest.y >= Main.maxTilesY)
             return false;
 
-        // 原版消耗概率：1 / (1 + Power/6)
+        // 原版消耗概率：1 / (1 + PowerChanceBonus/6)
         float chance = 1f / (1f + Power / 6f);
 
         // 检查是否有减少消耗的饰品
@@ -412,7 +412,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
 
         // 任务鱼
         int questFish = -1;
-        if (NPC.AnyNPCs(NPCID.Angler) && !Main.anglerQuestFinished)
+        if (Config.QuestFish && NPC.AnyNPCs(NPCID.Angler) && !Main.anglerQuestFinished)
             questFish = Main.anglerQuestItemNetIDs[Main.anglerQuest];
 
         // 熔岩钓鱼完整判定（鱼竿、鱼饵、饰品）
@@ -498,7 +498,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         if (atmo < 0.25f) atmo = 0.25f;
         if (atmo > 1f) atmo = 1f;
         return atmo;
-    } 
+    }
     #endregion
 
     #region 获取水体数量
@@ -508,10 +508,9 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         // 缓存当前水体数量 避免重复计算
         int water = 0;
         int radius = Config.Range; // 直接使用图格半径
-        int minX = Math.Max(pos.X - radius, 0);
-        int maxX = Math.Min(pos.X + radius, Main.maxTilesX - 1);
-        int minY = Math.Max(pos.Y - radius, 0);
-        int maxY = Math.Min(pos.Y + radius, Main.maxTilesY - 1);
+        int minX, maxX, minY, maxY;
+        GetCenter(pos, radius, out minX, out maxX, out minY, out maxY);
+
         for (int x = minX; x <= maxX; x++)
             for (int y = minY; y <= maxY; y++)
             {
@@ -632,13 +631,10 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     /// </summary>
     private static bool TryFindAndPutInNearbyChest(Point center, int radius, Vector2 from, Item item)
     {
-        int minX = Math.Max(center.X - radius, 0);
-        int maxX = Math.Min(center.X + radius, Main.maxTilesX - 1);
-        int minY = Math.Max(center.Y - radius, 0);
-        int maxY = Math.Min(center.Y + radius, Main.maxTilesY - 1);
+        int minX, maxX, minY, maxY;
+        GetCenter(center, radius, out minX, out maxX, out minY, out maxY);
 
         for (int x = minX; x <= maxX; x++)
-        {
             for (int y = minY; y <= maxY; y++)
             {
                 // 跳过钓鱼箱本身（已在第一步处理）
@@ -651,7 +647,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                 if (TryPutInChest(chest, chest.x, chest.y, ci, from, item))
                     return true;
             }
-        }
+        
         return false;
     }
 
@@ -691,10 +687,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     /// </summary>
     private static Point FindWaterInRadius(Point center, int radius)
     {
-        int minX = Math.Max(center.X - radius, 0);
-        int maxX = Math.Min(center.X + radius, Main.maxTilesX - 1);
-        int minY = Math.Max(center.Y - radius, 0);
-        int maxY = Math.Min(center.Y + radius, Main.maxTilesY - 1);
+        int minX, maxX, minY, maxY;
+        GetCenter(center, radius, out minX, out maxX, out minY, out maxY);
 
         for (int x = minX; x <= maxX; x++)
         {
@@ -709,8 +703,18 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     }
     #endregion
 
+    #region 获取矩形坐标
+    public static void GetCenter(Point center, int radius, out int minX, out int maxX, out int minY, out int maxY)
+    {
+        minX = Math.Max(center.X - radius, 0);
+        maxX = Math.Min(center.X + radius, Main.maxTilesX - 1);
+        minY = Math.Max(center.Y - radius, 0);
+        maxY = Math.Min(center.Y + radius, Main.maxTilesY - 1);
+    }
+    #endregion
+
     #region 自定义额外渔获
-    private static void CustomFishes(MachData data)
+    private static void CustomFishes(MachData data, Item rodItem, ref bool noSapwn)
     {
         // 创建临时玩家，用于条件判断中的环境检查（如生物群落）
         var plr = new Player();
@@ -735,15 +739,88 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         foreach (var rule in Config.CustomFishes)
         {
             // 检查条件（如果配置了条件）
-            if (rule.Cond.Any())
-            {
-                // 使用 Utils.CheckConds 判断条件是否满足，传入 plr
-                if (!CheckConds(rule.Cond, plr))
-                    continue;
-            }
+            if (rule.Cond.Count > 0 && !Utils.CheckConds(rule.Cond, plr))
+                continue;
 
-            // 概率判定
-            if (Main.rand.Next(rule.ChanceDenominator) == 0)
+            // 鱼饵投掷者概率加成：概率分母减半
+            int Chance = rule.Chance;
+            if (rodItem.type == ItemID.BloodFishingRod)
+                Chance = Math.Max(1, Chance / 2);
+
+            if (Main.rand.Next(Chance) != 0)
+                continue;
+
+            // 生成NPC
+            if (rule.NPCType > 0)
+            {
+                // 检查是否允许生成自定义NPC
+                if (!Config.EnableCustomNPC)
+                    continue; // 跳过此规则，继续处理下一条
+
+                // 实时统计水体（用于敌怪生成判断）
+                int lavaTiles = 0, honeyTiles = 0;
+                int waterTiles = GetWaterTiles(data.Pos, ref lavaTiles, ref honeyTiles);
+                bool inLava = lavaTiles > 0;
+                bool inHoney = honeyTiles > 0;
+
+                // 检查附近是否有玩家（否则NPC会消失）
+                if (!IsAnyPlayerNearby(data.Pos, Config.Range))
+                    continue;
+
+                // 添加液体检查：岩浆或蜂蜜中不能生成敌怪
+                if (inLava || inHoney)
+                    continue;
+
+                Vector2 spawnPos = FindFishingSpot(data.Pos);
+
+                // 独立怪物检查
+                if (Config.SoloCustomMonster)
+                {
+                    // 获取所有自定义渔获的怪物类型集合
+                    var Monsters = Config.CustomFishes
+                        .Where(r => r.NPCType > 0)
+                        .Select(r => r.NPCType)
+                        .ToHashSet();
+
+                    bool duplicate = false;
+
+                    // 在 Config.Range 范围内检查是否存在任何自定义怪物
+                    for (int i = 0; i < Main.maxNPCs; i++)
+                    {
+                        var npc = Main.npc[i];
+                        if (npc.active && Monsters.Contains(npc.type))
+                        {
+                            // 图格距离转换为像素距离平方
+                            float distSq = (npc.position - spawnPos).LengthSquared();
+                            float maxDistSq = Config.Range * Config.Range * 256f;
+                            if (distSq <= maxDistSq)
+                            {
+                                duplicate = true;
+                                break;
+                            }
+                        }
+                    }
+
+                    if (duplicate)
+                        continue; // 已有一个怪物，跳过本次生成
+                }
+                
+                int npcIndex = NPC.NewNPC(null, (int)spawnPos.X, (int)spawnPos.Y, rule.NPCType);
+                if (npcIndex >= 0)
+                {
+                    var npc = Main.npc[npcIndex];
+                    npc.active = true;
+                    npc.netUpdate = true;
+                    NetMessage.SendData((int)PacketTypes.NpcUpdate, -1, -1, null, npcIndex);
+
+                    if (Config.Broadcast)
+                        TShock.Utils.Broadcast($"{data.Owner}的钓鱼机 钓到了 {Lang.GetNPCNameValue(rule.NPCType)}", color2);
+                }
+
+                noSapwn = true;
+                return;    // 生成敌怪后，本次钓鱼不再处理其他掉落（包括原版）
+            }
+            else if (rule.ItemType > 0)
             {
                 // 检查排除列表
                 if (data.Exclude.Contains(rule.ItemType))
@@ -758,11 +835,29 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                 TryDeposit(data, custom);
 
                 if (Config.Broadcast)
-                {
                     TShock.Utils.Broadcast($"{data.Owner}的钓鱼机 额外钓到了 {ItemIcon(custom.type, custom.stack)} 坐标:{data.Pos.X} {data.Pos.Y}", color2);
-                }
+
+                noSapwn = true;
             }
         }
-    } 
+    }
+
+    // 检查指定位置附近是否有在线玩家
+    private static bool IsAnyPlayerNearby(Point pos, int range)
+    {
+        Vector2 center = new Vector2(pos.X * 16, pos.Y * 16);
+        float Squared = range * range * 256f; // 距离平方，避免开方
+        foreach (var plr in TShock.Players)
+        {
+            if (plr?.Active == true)
+            {
+                Vector2 tpos = plr.TPlayer.position;
+                if ((tpos - center).LengthSquared() <= Squared)
+                    return true;
+            }
+        }
+        return false;
+    }
     #endregion
+
 }

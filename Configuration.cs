@@ -1,4 +1,5 @@
 ﻿using Newtonsoft.Json;
+using Terraria;
 using Terraria.ID;
 using static Plugin.Plugin;
 
@@ -7,27 +8,33 @@ namespace Plugin;
 internal class Configuration
 {
     #region 配置项成员
-    [JsonProperty("自定义渔获进度参考", Order = -1)]
+    [JsonProperty("自定渔获进度参考", Order = -1)]
     public List<string> Reference = new();
     [JsonProperty("使用方法", Order = 0)]
     public List<string> Text { get; set; } = new();
     [JsonProperty("插件开关", Order = 1)]
     public bool Enabled { get; set; } = true;
-    [JsonProperty("广播消息", Order = 2)]
-    public bool Broadcast { get; set; } = false;
-    [JsonProperty("停钓警告秒数", Order = 3)]
-    public int Warning { get; set; } = 60;
-    [JsonProperty("钓鱼间隔帧数", Order = 4)]
-    public string FishFrames { get; set; } = "60,240";
-    [JsonProperty("搜索范围格数", Order = 5)]
+    [JsonProperty("钓任务鱼", Order = 3)]
+    public bool QuestFish { get; set; } = true;
+    [JsonProperty("警告广播", Order = 4)]
+    public bool Broadcast { get; set; } = true;
+    [JsonProperty("广播间隔", Order = 5)]
+    public int BC_CoolDown { get; set; } = 60;
+    [JsonProperty("钓鱼间隔帧数", Order = 6)]
+    public string FishInterval { get; set; } = "60,240";
+    [JsonProperty("搜索范围格数", Order = 7)]
     public int Range { get; set; } = 62;
-    [JsonProperty("鱼匣额外加成", Order = 6)]
+    [JsonProperty("鱼匣额外加成", Order = 8)]
     public int CrateChanceBonus { get; set; } = 15;
-    [JsonProperty("渔力额外加成", Order = 7)]
-    public int Power { get; set; } = 20;
-    [JsonProperty("自定加成物品", Order = 8)]
+    [JsonProperty("渔力额外加成", Order = 9)]
+    public int PowerChanceBonus { get; set; } = 20;
+    [JsonProperty("允许钓出怪物", Order = 10)]
+    public bool EnableCustomNPC { get; set; } = true;
+    [JsonProperty("禁钓已有怪物", Order = 11)]
+    public bool SoloCustomMonster { get; set; } = true; // 同一区域只能存在一个自定义渔获怪物
+    [JsonProperty("自定加成物品", Order = 12)]
     public Dictionary<int, int> CustomPowerItems { get; set; } = new();
-    [JsonProperty("自定义渔获", Order = 9)]
+    [JsonProperty("自定义渔获", Order = 13)]
     public List<CustomFishRule> CustomFishes { get; set; } = new();
 
     [JsonIgnore]
@@ -82,9 +89,23 @@ internal class Configuration
             new CustomFishRule()
             { 
                 ItemType = ItemID.LifeCrystal, 
-                ChanceDenominator = 30, 
+                Chance = 30, 
                 Cond = new List<string>() { "克眼" } 
-            }
+            },
+
+            // 血月肉前敌怪（基础概率 1/30）
+            new CustomFishRule() { NPCType = NPCID.ZombieMerman, Chance = 30, Cond = new List<string>() { "血月", "肉前" } },
+            new CustomFishRule() { NPCType = NPCID.EyeballFlyingFish, Chance = 30, Cond = new List<string>() { "血月", "肉前" } },
+            new CustomFishRule() { NPCType = NPCID.Drippler, Chance = 30, Cond = new List<string>() { "血月", "肉前" } },
+
+            // 血月肉后敌怪（基础概率 1/30）
+            new CustomFishRule() { NPCType = NPCID.GoblinShark, Chance = 30, Cond = new List<string>() { "血月", "肉后" } },
+            new CustomFishRule() { NPCType = NPCID.BloodEelHead, Chance = 30, Cond = new List<string>() { "血月", "肉后" } },
+            new CustomFishRule() { NPCType = NPCID.ZombieMerman, Chance = 30, Cond = new List<string>() { "血月", "肉后" } },
+            new CustomFishRule() { NPCType = NPCID.EyeballFlyingFish, Chance = 30, Cond = new List<string>() { "血月", "肉后" } },
+
+            // 恐惧鹦鹉螺（肉后，低概率 1/60）
+            new CustomFishRule() { NPCType = NPCID.BloodNautilus, Chance = 60, Cond = new List<string>() { "血月", "肉后" } },
         };
     }
     #endregion
@@ -92,12 +113,12 @@ internal class Configuration
     #region 解析随机间隔
     public void ParseFrames()
     {
-        if (string.IsNullOrWhiteSpace(FishFrames))
+        if (string.IsNullOrWhiteSpace(FishInterval))
         {
             MinFrames = MaxFrames = 60;
             return;
         }
-        var parts = FishFrames.Split(',');
+        var parts = FishInterval.Split(',');
         if (parts.Length == 1 && int.TryParse(parts[0], out int single))
         {
             MinFrames = MaxFrames = single;
@@ -140,5 +161,33 @@ internal class Configuration
             return config;
         }
     }
+    #endregion
+
+    #region 自动描述
+    public void AutoDesc()
+    {
+        if (CustomFishes == null || !CustomFishes.Any()) return;
+
+        foreach (var rule in CustomFishes)
+        {
+            rule.Desc = string.Empty;
+
+            if (rule.ItemType == 0 && rule.NPCType == 0)
+            {
+                rule.Desc = "[c/FF5555:无效规则]";
+                continue;
+            }
+
+            string chanceStr = (100.0 / rule.Chance).ToString("F2") + "%";
+            string target;
+            if (rule.ItemType > 0)
+                target = $"{Lang.GetItemNameValue(rule.ItemType)}";
+            else
+                target = $"{Lang.GetNPCNameValue(rule.NPCType)}";
+
+            string condStr = rule.Cond.Count > 0 ? string.Join("、", rule.Cond) + "条件下" : "无条件";
+            rule.Desc = $"{condStr} 有 {chanceStr} 概率钓出 {target}";
+        }
+    } 
     #endregion
 }

@@ -58,9 +58,30 @@ internal class MyCommand
                         // 创建新机器，并缓存当前玩家的环境信息
                         var data = new MachData { Owner = plr.Name, Pos = point };
 
-                        // 获取箱子索引并缓存
+                        // 获取箱子索引并缓存（支持小范围搜索）
                         int chestIdx = Chest.FindChest(point.X, point.Y);
-                        if (chestIdx != -1)
+                        if (chestIdx == -1)
+                        {
+                            // 在 2 格范围内搜索最近的箱子
+                            int radius = 2;
+                            int minX, maxX, minY, maxY;
+                            GetCenter(point, radius, out minX, out maxX, out minY, out maxY);
+
+                            for (int x = minX; x <= maxX; x++)
+                            {
+                                for (int y = minY; y <= maxY; y++)
+                                {
+                                    int idx = Chest.FindChest(x, y);
+                                    if (idx != -1)
+                                    {
+                                        chestIdx = idx;
+                                        break;
+                                    }
+                                }
+                                if (chestIdx != -1) break;
+                            }
+                        }
+                        else
                             data.ChestIndex = chestIdx;
 
                         // 获取当前玩家的真实环境（使用 TSPlayer 的 TPlayer）
@@ -187,7 +208,7 @@ internal class MyCommand
                     float waterQuality = Math.Min(1f, (float)waterTiles / waterNeeded);
 
                     // 基础渔力（不含鱼饵，因为鱼饵动态消耗）
-                    int basePower = Config.Power;
+                    int basePower = Config.PowerChanceBonus;
                     basePower += GetRodPower(data); // 动态获取鱼竿渔力
                     basePower += GetBonus(data); // 饰品加成
 
@@ -226,8 +247,13 @@ internal class MyCommand
 
             case "i":
             case "item":
-            case "渔获":
+            case "物品":
                 HandleCustomFish(args);
+                break;
+
+            case "npc":
+            case "怪物":
+                HandleNPCFish(args);
                 break;
 
             case "exc":
@@ -289,7 +315,8 @@ internal class MyCommand
             if (IsAdmin(plr))
             {
                 mess.AppendLine($"/{afm} cond - 查看自定渔获条件");
-                mess.AppendLine($"/{afm} item - 修改自定义渔获");
+                mess.AppendLine($"/{afm} item - 修改自定渔获物品");
+                mess.AppendLine($"/{afm} npc - 修改自定渔获怪物");
                 mess.AppendLine($"/{afm} reset - 重置插件数据");
             }
             GradMess(mess, plr);
@@ -327,8 +354,8 @@ internal class MyCommand
     {
         int range = Config.Range;
         int count = 0;
-        int minX = Math.Max(pos.X - range, 0), maxX = Math.Min(pos.X + range, Main.maxTilesX - 1);
-        int minY = Math.Max(pos.Y - range, 0), maxY = Math.Min(pos.Y + range, Main.maxTilesY - 1);
+        int minX, maxX, minY, maxY;
+        GetCenter(pos, range, out minX, out maxX, out minY, out maxY);
 
         for (int x = minX; x <= maxX; x++)
             for (int y = minY; y <= maxY; y++)
@@ -453,6 +480,7 @@ internal class MyCommand
         if (existing != null)
         {
             Config.CustomFishes.Remove(existing);
+            Config.AutoDesc();
             Config.Write();
             TShock.Utils.Broadcast($"管理员 [c/47D3C3:{plr.Name}] 移除了自定义渔获 [i/s1:{type}] {name}", color);
             return;
@@ -498,10 +526,11 @@ internal class MyCommand
         var newRule = new CustomFishRule
         {
             ItemType = type,
-            ChanceDenominator = Denom,
+            Chance = Denom,
             Cond = final
         };
         Config.CustomFishes.Add(newRule);
+        Config.AutoDesc();
         Config.Write();
 
         string condText = final.Count > 0 ? $" 条件: {string.Join(", ", final)}" : "";
@@ -517,6 +546,168 @@ internal class MyCommand
         plr.SendMessage($"数字设置概率分母,文字设置进度条件", color2);
         plr.SendMessage($"无第2参数存在则移除,不在则添加,默认1%概率", color2);
     }
+    #endregion
+
+    #region 修改NPC渔获（支持列出、添加/移除）
+    private static void HandleNPCFish(CommandArgs args)
+    {
+        var plr = args.Player;
+        if (!IsAdmin(plr))
+        {
+            plr.SendErrorMessage("你没有权限使用此命令");
+            return;
+        }
+
+        if (!plr.RealPlayer)
+        {
+            plr.SendErrorMessage("请进入游戏后使用指令");
+            return;
+        }
+
+        // 无参数时显示帮助
+        if (args.Parameters.Count == 1)
+        {
+            NpcHelp(plr);
+            return;
+        }
+
+        // 获取玩家位置（图格）
+        var playerPos = new Point((int)(plr.TPlayer.position.X / 16), (int)(plr.TPlayer.position.Y / 16));
+        var nearbyNPCs = new Dictionary<int, (int npcType, string name, int dist, bool exists)>(); // 按类型去重
+
+        // 扫描附近NPC（距离 ≤ 85 格）
+        for (int i = 0; i < Main.maxNPCs; i++)
+        {
+            var npc = Main.npc[i];
+            if (!npc.active || npc.type <= 0 ||
+                npc.friendly || npc.townNPC ||
+                npc.SpawnedFromStatue ||
+                npc.type == NPCID.WallofFlesh ||
+                npc.type == NPCID.TargetDummy) continue;
+
+            int npcX = (int)(npc.position.X / 16);
+            int npcY = (int)(npc.position.Y / 16);
+            int dist = Math.Abs(npcX - playerPos.X) + Math.Abs(npcY - playerPos.Y); // 曼哈顿距离
+            if (dist <= 85)
+            {
+                bool exists = Config.CustomFishes.Any(r => r.NPCType == npc.type);
+                // 如果该类型尚未记录，或者当前距离更近，则更新
+                if (!nearbyNPCs.ContainsKey(npc.type) || nearbyNPCs[npc.type].dist > dist)
+                {
+                    nearbyNPCs[npc.type] = (npc.type, npc.GivenOrTypeName, dist, exists);
+                }
+            }
+        }
+
+        // 转换为列表并按距离排序
+        var sortedNPCs = nearbyNPCs.Values.OrderBy(n => n.dist).ToList();
+
+        // 处理 "list" 子命令
+        if (args.Parameters[1].ToLower() == "ls" || args.Parameters[1].ToLower() == "list")
+        {
+            if (sortedNPCs.Count == 0)
+            {
+                plr.SendInfoMessage("附近85格内没有找到任何NPC");
+                return;
+            }
+
+            var sb = new StringBuilder();
+            sb.AppendLine($"附近[c/47D3C3:85格内]NPC列表 (共{sortedNPCs.Count}个)");
+            int idx = 1;
+            foreach (var npc in sortedNPCs)
+            {
+                string color = npc.exists ? "00FF00" : "FF5555";
+                var Desc = npc.exists ? " [已加]" : " [未加]";
+                sb.AppendLine($"{idx++}.[c/{color}:{npc.name}({npc.npcType})] 距离:{npc.dist}格 {Desc}");
+            }
+            plr.SendMessage(TextGradient(sb.ToString()), color);
+            return;
+        }
+
+        // 解析NPC ID
+        if (!int.TryParse(args.Parameters[1], out int npcId))
+        {
+            plr.SendErrorMessage("无效的NPC ID，请使用数字ID");
+            NpcHelp(plr);
+            return;
+        }
+
+        // 解析概率和条件
+        int Chance = 100;
+        List<string> conds = new List<string>();
+        if (args.Parameters.Count >= 3)
+        {
+            string param = args.Parameters[2];
+            // 尝试解析为整数（概率分母）
+            if (int.TryParse(param, out int denom))
+            {
+                Chance = denom;
+                // 后续参数为条件
+                for (int i = 3; i < args.Parameters.Count; i++)
+                    conds.Add(args.Parameters[i]);
+            }
+            else
+            {
+                // 第一个非数字参数作为条件的一部分
+                conds.Add(param);
+                for (int i = 3; i < args.Parameters.Count; i++)
+                    conds.Add(args.Parameters[i]);
+            }
+        }
+
+        // 处理条件（支持逗号、空格分隔）
+        var fcond = new List<string>();
+        foreach (var cond in conds)
+        {
+            var parts = cond.Split([',', ' '], StringSplitOptions.RemoveEmptyEntries);
+            foreach (var part in parts)
+                if (!string.IsNullOrWhiteSpace(part))
+                    fcond.Add(part.Trim());
+        }
+
+        // 查找所有匹配的规则
+        var matchedRules = Config.CustomFishes.Where(r => r.NPCType == npcId).ToList();
+        string npcName = Lang.GetNPCNameValue(npcId);
+        if (matchedRules.Count > 0)
+        {
+            // 移除所有匹配的规则
+            foreach (var rule in matchedRules)
+                Config.CustomFishes.Remove(rule);
+            Config.AutoDesc();
+            Config.Write();
+            TShock.Utils.Broadcast($"管理员 [c/47D3C3:{plr.Name}] 移除了 {matchedRules.Count} 个自定渔获npc {npcName}", color);
+        }
+        else
+        {
+            var newRule = new CustomFishRule
+            {
+                NPCType = npcId,
+                Chance = Chance,
+                Cond = fcond.ToList()
+            };
+            Config.CustomFishes.Add(newRule);
+            Config.AutoDesc();
+            Config.Write();
+
+            string condText = fcond.Count > 0 ? $" 条件: {string.Join(", ", fcond)}" : "";
+            TShock.Utils.Broadcast($"管理员 [c/47D3C3:{plr.Name}] 添加了自定渔获npc {npcName} 概率:1/{Chance}{condText}", color);
+        }
+    }
+
+    //  显示NPC渔获管理帮助
+    private static void NpcHelp(TSPlayer plr)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"[c/47D3C3:自定义渔获 - NPC管理帮助]");
+        sb.AppendLine($"[c/55CDFF:•] /{afm} npc - 显示本帮助");
+        sb.AppendLine($"[c/55CDFF:•] /{afm} npc list - 列出附近85格内NPC");
+        sb.AppendLine($"[c/55CDFF:•] /{afm} npc id - 添加/移除NPC");
+        sb.AppendLine($"[c/55CDFF:•] /{afm} npc id [概率] [条件] - 添加并设置参数");
+        sb.AppendLine($"[c/FFFF00:提示] 只写怪物id 存在移除,不在添加");
+        sb.AppendLine($"[c/FFFF00:提示] 列出附近npc时名字为 红=不在 | 绿=存在");
+        sb.AppendLine($"[c/FFFF00:示例] /{afm} npc 586 50 血月,肉后");
+        plr.SendMessage(TextGradient(sb.ToString()), color);
+    } 
     #endregion
 
     #region 显示所有可用条件（无需权限）
@@ -573,7 +764,7 @@ internal class MyCommand
             page = 1;
         if (page < 1) page = 1;
 
-        int perPage = 8;
+        int perPage = 10;
         int total = (int)Math.Ceiling(Config.CustomFishes.Count / (double)perPage);
         if (page > total) page = total;
 
@@ -581,30 +772,41 @@ internal class MyCommand
         int end = Math.Min(start + perPage, Config.CustomFishes.Count);
 
         var sb = new StringBuilder();
-        sb.AppendLine($"[c/47D3C3:══ 自定义渔获列表 (第{page}/{total}页) ══]");
+        sb.AppendLine($"[c/47D3C3:自定义渔获列表 (第{page}/{total}页)]");
 
         for (int i = start; i < end; i++)
         {
             var rule = Config.CustomFishes[i];
-            // 计算百分比： (1 / 分母) * 100
-            double percent = 100.0 / rule.ChanceDenominator;
-            string Display;
-            // 如果百分比是整数，显示整数；否则保留两位小数
-            if (Math.Abs(percent - Math.Round(percent)) < 0.001)
-                Display = Math.Round(percent).ToString();
-            else
-                Display = percent.ToString("F2");
 
-            string condText = rule.Cond.Count > 0 ? $" 条件: {string.Join(", ", rule.Cond)}" : "";
-            sb.AppendLine($"[c/55CDFF:{i + 1:00}.] [i/s1:{rule.ItemType}] " +
-                          $"概率:{Display}%{condText}");
+            // 构造显示文本
+            string icon;
+            if (rule.ItemType > 0)
+            {
+                icon = $"[i/s1:{rule.ItemType}]";
+            }
+            else if (rule.NPCType > 0)
+            {
+                icon = $"{Lang.GetNPCNameValue(rule.NPCType)}";
+            }
+            else
+            {
+                icon = "[c/FF5555:无]";
+            }
+
+            var Desc = string.Empty;
+            if (!string.IsNullOrEmpty(rule.Desc))
+                Desc = rule.Desc;
+
+            sb.AppendLine($"[c/55CDFF:{i + 1:00}.] {icon} - {Desc}");
+
+
         }
 
         if (total > 1)
         {
             sb.AppendLine($"[c/FFFF00:输入 /{afm} lt {page + 1} 查看下一页]");
         }
-        plr.SendMessage(sb.ToString(), color);
+        plr.SendMessage(TextGradient(sb.ToString()), color);
     }
     #endregion
 }
