@@ -15,7 +15,7 @@ internal class DataStorage
     public static void SetDirty() => dirty = true;  // 允许外部标记脏数据
 
     // 查找钓鱼机方法
-    public static MachData FindTile(Point pos) => machines.FirstOrDefault(m => m.Pos.X == pos.X && m.Pos.Y == pos.Y)!;
+    public static MachData FindTile(Point pos) => machines.FirstOrDefault(m => m.Pos == pos)!;
     public static MachData FindChest(int index) => machines.FirstOrDefault(m => m.ChestIndex == index)!;
 
     // 添加或更新机器（如果坐标已存在则替换）

@@ -67,6 +67,14 @@ public class MachData
     public bool HasCratePotion { get; set; }
     [JsonIgnore]
     public bool CanFishInLava { get; set; }
+    [JsonIgnore]
+    public bool HasTackle { get; set; }
+
+    [JsonIgnore]
+    public HashSet<string> NearbyPlayers { get; set; } = new HashSet<string>();
+
+    [JsonIgnore]
+    public bool HasMonsterRule { get; set; }
 
     [JsonIgnore]
     public DateTime CacheTime { get; set; }

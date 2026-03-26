@@ -20,7 +20,9 @@ internal class Configuration
     public bool Broadcast { get; set; } = true;
     [JsonProperty("广播间隔", Order = 5)]
     public int BC_CoolDown { get; set; } = 60;
-    [JsonProperty("钓鱼间隔帧数", Order = 6)]
+    [JsonProperty("需要电路", Order = 6)]
+    public bool NeedWiring { get; set; } = true;
+    [JsonProperty("无电钓鱼间隔", Order = 6)]
     public string FishInterval { get; set; } = "60,240";
     [JsonProperty("搜索范围格数", Order = 7)]
     public int Range { get; set; } = 62;
@@ -67,11 +69,11 @@ internal class Configuration
         Text = new List<string>()
         {
              "1.给玩家权限;/group addperm default afm.use",
-             "2.在鱼池放个箱子,使用/afm set 镐击一下箱子",
-             "3.使用/afm save 保存当前钓鱼机",
-             "4.给箱子放入鱼竿和鱼饵",
+             "2.放个箱子,使用/afm s指令,再打开箱子",
+             "3.给箱子放入鱼竿和鱼饵",
+             "4.如果开启【需要电路】,则需要连上电线与计时器",
              "重置服务器时使用:/afm reset",
-             "提示:挖掉箱子可自动销毁钓鱼机",
+             "挖掉箱子自动销毁钓鱼机",
         };
 
         CustomPowerItems = new()
