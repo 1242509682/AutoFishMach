@@ -3,11 +3,11 @@ using Microsoft.Xna.Framework;
 using Terraria;
 using Terraria.ID;
 using TShockAPI;
-using static Plugin.DataStorage;
-using static Plugin.Plugin;
-using static Plugin.Utils;
+using static FishMach.DataStorage;
+using static FishMach.Plugin;
+using static FishMach.Utils;
 
-namespace Plugin;
+namespace FishMach;
 
 internal class MyCommand
 {

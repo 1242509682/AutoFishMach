@@ -1,7 +1,7 @@
 ﻿using Microsoft.Xna.Framework;
 using Newtonsoft.Json;
 
-namespace Plugin;
+namespace FishMach;
 
 #region 机器数据
 public class MachData
@@ -71,13 +71,7 @@ public class MachData
     public bool HasTackle { get; set; }
 
     [JsonIgnore]
-    public HashSet<string> NearbyPlayers { get; set; } = new HashSet<string>();
-
-    [JsonIgnore]
-    public bool HasMonsterRule { get; set; }
-
-    [JsonIgnore]
-    public DateTime CacheTime { get; set; }
+    public DateTime lastEnvUpd = DateTime.MinValue;
 
     public MachData() { }
 }

@@ -1,9 +1,9 @@
 ﻿using Newtonsoft.Json;
 using Terraria;
 using Terraria.ID;
-using static Plugin.Plugin;
+using static FishMach.Plugin;
 
-namespace Plugin;
+namespace FishMach;
 
 internal class Configuration
 {
@@ -21,15 +21,13 @@ internal class Configuration
     [JsonProperty("广播间隔", Order = 5)]
     public int BC_CoolDown { get; set; } = 60;
     [JsonProperty("需要电路", Order = 6)]
-    public bool NeedWiring { get; set; } = true;
+    public bool NeedWiring { get; set; } = false;
     [JsonProperty("无电钓鱼间隔", Order = 6)]
     public string FishInterval { get; set; } = "60,240";
     [JsonProperty("搜索范围格数", Order = 7)]
     public int Range { get; set; } = 62;
     [JsonProperty("保存间隔帧数", Order = 7)]
     public int SaveInterval { get; set; } = 600;
-    [JsonProperty("刷新缓存秒数", Order = 7)]
-    public int GetInterval { get; set; } = 30;
     [JsonProperty("鱼匣额外加成", Order = 8)]
     public int CrateChanceBonus { get; set; } = 15;
     [JsonProperty("渔力额外加成", Order = 9)]
@@ -37,10 +35,12 @@ internal class Configuration
     [JsonProperty("允许钓出怪物", Order = 10)]
     public bool EnableCustomNPC { get; set; } = true;
     [JsonProperty("禁钓已有怪物", Order = 11)]
-    public bool SoloCustomMonster { get; set; } = true; // 同一区域只能存在一个自定义渔获怪物
-    [JsonProperty("自定加成物品", Order = 12)]
+    public bool SoloCustomMonster { get; set; } = true;
+    [JsonProperty("禁钓模式(0不同类/1仅单挑)", Order = 12)]
+    public int SoloMode { get; set; } = 0;
+    [JsonProperty("自定加成物品", Order = 13)]
     public Dictionary<int, int> CustomPowerItems { get; set; } = new();
-    [JsonProperty("自定义渔获", Order = 13)]
+    [JsonProperty("自定义渔获", Order = 14)]
     public List<CustomFishRule> CustomFishes { get; set; } = new();
 
     [JsonIgnore]

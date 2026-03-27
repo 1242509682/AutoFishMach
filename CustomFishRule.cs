@@ -1,6 +1,6 @@
 ﻿using Newtonsoft.Json;
 
-namespace Plugin;
+namespace FishMach;
 
 public class CustomFishRule
 {

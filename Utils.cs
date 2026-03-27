@@ -6,9 +6,9 @@ using Terraria.Utilities;
 using Microsoft.Xna.Framework;
 using Terraria.GameContent.Events;
 using System.Text.RegularExpressions;
-using static Plugin.Plugin;
+using static FishMach.Plugin;
 
-namespace Plugin;
+namespace FishMach;
 
 internal class Utils
 {
