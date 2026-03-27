@@ -3,7 +3,7 @@ using Microsoft.Xna.Framework;
 using Terraria;
 using Terraria.ID;
 using TShockAPI;
-using static FishMach.DataStorage;
+using static FishMach.DataManager;
 using static FishMach.Plugin;
 using static FishMach.Utils;
 
@@ -52,9 +52,9 @@ internal class MyCommand
                     List<string> lines = [];
                     foreach (var data in all)
                     {
-                        int baitCount = GetBaitCount(data.Pos);
+                        int baitCount = AutoFishing.GetBaitCount(data.ChestIndex);
                         string baitInfo = baitCount > 0 ? $"鱼饵:{baitCount}" : "鱼饵:无";
-                        string rodName = GetRodName(data); // 动态获取鱼竿名称
+                        string rodName = AutoFishing.GetRodName(data); // 动态获取鱼竿名称
 
                         lines.Add(
                             $"{index}.{data.Owner}的钓鱼机 " +
@@ -175,56 +175,12 @@ internal class MyCommand
     }
     #endregion
 
-    #region 获取鱼竿名称与鱼力
-    public static string GetRodName(MachData data)
-    {
-        if (FindRod(data, out Item rodItem, out _, out _))
-            return rodItem.Name;
-        return "无";
-    }
-
-    public static int GetRodPower(MachData data)
-    {
-        if (FindRod(data, out Item rodItem, out _, out _))
-            return rodItem.fishingPole;
-        return 0;
-    }
-    #endregion
-
     #region 清空所有数据
     private static void HandleReset(CommandArgs args)
     {
         if (!IsAdmin(args.Player)) return;
         Clear();
         args.Player.SendMessage("所有数据已重置", Color.OrangeRed);
-    }
-    #endregion
-
-    #region 获取鱼饵数量
-    private static int GetBaitCount(Point pos)
-    {
-        int range = Config.Range;
-        int count = 0;
-        int minX, maxX, minY, maxY;
-        GetCenter(pos, range, out minX, out maxX, out minY, out maxY);
-
-        for (int x = minX; x <= maxX; x++)
-            for (int y = minY; y <= maxY; y++)
-            {
-                int ci = Chest.FindChest(x, y);
-                if (ci == -1) continue;
-                var chest = Main.chest[ci];
-                for (int s = 0; s < chest.item.Length; s++)
-                {
-                    var item = chest.item[s];
-                    if (item != null && !item.IsAir && item.bait > 0)
-                    {
-                        count += item.stack;
-                    }
-                }
-            }
-
-        return count;
     }
     #endregion
 
@@ -243,20 +199,27 @@ internal class MyCommand
     #region 显示信息方法
     public static void ShowMachineInfo(TSPlayer plr, MachData data)
     {
+        // 确保环境最新
+        if (data.EnvDirty || (DateTime.UtcNow - data.LastEnvUpd).TotalSeconds > 5)
+            EnvManager.RefreshEnv(data);
+
         // 实时统计水体（水、岩浆、蜂蜜）
-        int lavaTiles = 0, honeyTiles = 0;
-        int waterTiles = GetWaterTiles(data.Pos, ref lavaTiles, ref honeyTiles);
+        int all = 0, water = 0, lava = 0, honey = 0;
+        EnvManager.NewGetLiquid(data, out water, out lava, out honey);
+        all = water + lava + honey;
 
         // 大气因子
         float atmo = data.atmo;
 
         int waterNeeded = (int)(300f * atmo);
-        float waterQuality = Math.Min(1f, (float)waterTiles / waterNeeded);
+        float waterQuality = Math.Min(1f, (float)all / waterNeeded);
 
         // 基础渔力
         int basePower = Config.PowerChanceBonus;
-        basePower += GetRodPower(data);
-        basePower += RefreshCaches(data); // 实时更新加成
+        basePower += AutoFishing.GetRodPower(data);
+        // 更新所有物品缓存，data.BonusTotal 会被设置
+        EnvManager.UpdateMachineCache(data); 
+        basePower += data.BonusTotal;
 
         int finalPower = (int)(basePower * waterQuality);
 
@@ -276,7 +239,7 @@ internal class MyCommand
         // 其他环境参数
         plr.SendMessage($"高度等级:{GetHeightName(data.HeightLevel)}", color);
         plr.SendMessage($"大气因子:{atmo:F2}", color);
-        plr.SendMessage($"水体统计: 水{waterTiles} 岩浆:{lavaTiles} 蜂蜜:{honeyTiles}", color);
+        plr.SendMessage($"水体统计: 水{water} 岩浆:{lava} 蜂蜜:{honey}", color);
         plr.SendMessage($"需水体量:{waterNeeded}", color);
         plr.SendMessage($"水体质量:{waterQuality:P0}", color);
         plr.SendMessage($"无饵渔力:{basePower}", color);

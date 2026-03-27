@@ -8,6 +8,8 @@ public class MachData
 {
     [JsonProperty("所有者")]
     public string Owner { get; set; } = "";
+    [JsonProperty("区域名")]
+    public string RegName { get; set; } = "";
     [JsonProperty("坐标")]
     public Point Pos { get; set; } = new Point();
     [JsonProperty("箱子索引")]
@@ -33,22 +35,20 @@ public class MachData
     [JsonProperty("颠倒海洋")]
     public bool RolledRemixOcean { get; set; }
 
-    [JsonProperty("水体数量")]
-    public int WatCnt { get; set; }
-    [JsonProperty("岩浆数量")]
-    public int LavCnt { get; set; }
-    [JsonProperty("蜂蜜数量")]
-    public int HonCnt { get; set; }
+    [JsonProperty("液体名称")]
+    public string LiqName { get; set; }
+    [JsonProperty("液体总数")]
+    public int MaxLiq { get; set; }
+    [JsonProperty("液体坐标")]
+    public Point LiquidPos { get; set; } = new Point(-1, -1);
     [JsonProperty("大气因子")]
     public float atmo { get; set; }
-    [JsonProperty("最近水体坐标")]
-    public Point WaterPos { get; set; } = new Point(-1, -1);
     [JsonProperty("额外渔力总和")]
     public int BonusTotal { get; set; }
     [JsonProperty("排除物品")]
     public List<int> Exclude { get; set; } = new();
 
-    // 新增：鱼竿/鱼饵槽位缓存（仅用于运行时，不保存）
+    // 以下仅用于运行时计算，不保存
     [JsonIgnore]
     public int RodChest { get; set; } = -1;
     [JsonIgnore]
@@ -70,8 +70,27 @@ public class MachData
     [JsonIgnore]
     public bool HasTackle { get; set; }
 
+    // 环境缓存标志
     [JsonIgnore]
-    public DateTime lastEnvUpd = DateTime.MinValue;
+    public bool EnvDirty { get; set; } = true;
+    [JsonIgnore]
+    public DateTime LastEnvUpd = DateTime.MinValue;
+
+    // 区域玩家计数
+    [JsonIgnore]
+    public int PlrCnt { get; set; } = 0;
+
+    // 钓到物品后的计数器，用于自动整理
+    [JsonIgnore]
+    public int PutCounter { get; set; } = 0;
+
+    [JsonIgnore]
+    public int WatCnt { get; set; }
+    [JsonIgnore]
+    public int LavCnt { get; set; }
+    [JsonIgnore]
+    public int HonCnt { get; set; }
+
 
     public MachData() { }
 }
