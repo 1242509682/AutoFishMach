@@ -30,6 +30,8 @@ public class MachData
     public bool ZoneBeach { get; set; }
     [JsonProperty("地牢")]
     public bool ZoneDungeon { get; set; }
+    [JsonProperty("下雨")]
+    public bool ZoneRain { get; set; }
     [JsonProperty("高度等级")]
     public int HeightLevel { get; set; }
     [JsonProperty("颠倒海洋")]
@@ -37,53 +39,66 @@ public class MachData
 
     [JsonProperty("液体名称")]
     public string LiqName { get; set; }
-    [JsonProperty("液体总数")]
+    [JsonProperty("液体数量")]
     public int MaxLiq { get; set; }
     [JsonProperty("液体坐标")]
     public Point LiquidPos { get; set; } = new Point(-1, -1);
     [JsonProperty("大气因子")]
     public float atmo { get; set; }
-    [JsonProperty("额外渔力总和")]
-    public int BonusTotal { get; set; }
+    [JsonProperty("额外渔力")]
+    public int ExtraPower { get; set; }
     [JsonProperty("排除物品")]
-    public List<int> Exclude { get; set; } = new();
+    public HashSet<int> Exclude { get; set; } = new();
 
     // 以下仅用于运行时计算，不保存
-    [JsonIgnore]
-    public int RodChest { get; set; } = -1;
+
+    // 鱼竿槽位与播报标识
     [JsonIgnore]
     public int RodSlot { get; set; } = -1;
     [JsonIgnore]
-    public DateTime lastRodWarning = DateTime.MinValue;
+    public bool RodBroadcast = false;
 
-    [JsonIgnore]
-    public int BaitChest { get; set; } = -1;
+    // 鱼饵槽位与播报标识
     [JsonIgnore]
     public int BaitSlot { get; set; } = -1;
     [JsonIgnore]
-    public DateTime lastBaitWarning = DateTime.MinValue;
+    public bool BaitBroadcast = false;
 
+    // 宝匣药水槽位与消耗时间
     [JsonIgnore]
-    public bool HasCratePotion { get; set; }
+    public int CratePotionSlot { get; set; } = -1;
+    [JsonIgnore]
+    public DateTime CratePotionTime { get; set; } = DateTime.MinValue;
+
+    // 钓鱼药水槽位与消耗时间
+    [JsonIgnore]
+    public int FishingPotionSlot { get; set; } = -1;
+    [JsonIgnore]
+    public DateTime FishingPotionTime { get; set; } = DateTime.MinValue;
+
+    // 鱼饵桶
+    [JsonIgnore]
+    public int ChumBucketSlot { get; set; } = -1;
+    [JsonIgnore]
+    public DateTime ChumBucketTime { get; set; } = DateTime.MinValue;  // 效果过期时间
+
+    // 可以钓岩浆
     [JsonIgnore]
     public bool CanFishInLava { get; set; }
+
+    // 减少鱼饵消耗（箱子有钓具箱）
     [JsonIgnore]
     public bool HasTackle { get; set; }
 
-    // 环境缓存标志
+    // 环境需要更新标志
     [JsonIgnore]
-    public bool EnvDirty { get; set; } = true;
-    [JsonIgnore]
-    public DateTime LastEnvUpd = DateTime.MinValue;
+    public DateTime LastEnvUpdate = DateTime.MinValue;
 
     // 区域玩家计数
     [JsonIgnore]
-    public int PlrCnt { get; set; } = 0;
+    public int PlayerCount { get; set; } = 0;
 
-    // 钓到物品后的计数器，用于自动整理
-    [JsonIgnore]
-    public int PutCounter { get; set; } = 0;
-
+    // 液体数量
     [JsonIgnore]
     public int WatCnt { get; set; }
     [JsonIgnore]
@@ -91,6 +106,13 @@ public class MachData
     [JsonIgnore]
     public int HonCnt { get; set; }
 
+    // 初始化标志
+    [JsonIgnore]
+    public bool IntMach { get; set; } = true;
+
+    // 分帧执行（避免同1帧触发多台钓鱼机）
+    [JsonIgnore]
+    public long nextFrame { get; set; } = 0;
 
     public MachData() { }
 }

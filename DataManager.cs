@@ -14,18 +14,12 @@ internal class DataManager
     private static Dictionary<string, MachData> regionMap = new();
 
     // 通过区域名查找玩家
-    public static MachData FindByRgn(string name) => regionMap.GetValueOrDefault(name)!;
+    public static MachData FindRegion(string name) => regionMap.GetValueOrDefault(name)!;
 
     // 对外暴露只读列表
     public static IReadOnlyList<MachData> Machines => machines;
 
-    private static bool CanSave = false; // 脏标志
-    public static bool IsCanSave => CanSave; // 标记为自动保存
-    public static void NeedSave()
-    {
-        CanSave = true;
-        Save();
-    }
+    public static bool CanSave = false; // 脏标志
 
     // 查找钓鱼机方法
     public static MachData FindTile(Point pos) => posMap.GetValueOrDefault(pos)!;
@@ -51,7 +45,7 @@ internal class DataManager
         if (!string.IsNullOrEmpty(data.RegName)) 
             regionMap[data.RegName] = data;
 
-        NeedSave();
+        CanSave = true;
     }
 
     // 重置清空数据
@@ -61,7 +55,7 @@ internal class DataManager
         posMap.Clear();
         chestMap.Clear();
         regionMap.Clear();
-        NeedSave();
+        CanSave = true;
     }
 
     // 移除
@@ -91,6 +85,7 @@ internal class DataManager
         {
             if (File.Exists(file))
                 File.Delete(file);
+
             CanSave = false;
             return;
         }

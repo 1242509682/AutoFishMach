@@ -18,10 +18,8 @@ internal class Configuration
     public bool QuestFish { get; set; } = true;
     [JsonProperty("警告广播", Order = 3)]
     public bool Broadcast { get; set; } = true;
-    [JsonProperty("警告间隔", Order = 4)]
-    public int BC_CoolDown { get; set; } = 5;
-    [JsonProperty("自动整理计数", Order = 5)]
-    public int PutCounter { get; set; } = 3;
+    [JsonProperty("自动整理", Order = 5)]
+    public bool AutoPut { get; set; } = true;
     [JsonProperty("区域保护", Order = 6)]
     public bool DisabledBuild { get; set; } = false;
     [JsonProperty("区域广播", Order = 7)]
@@ -30,27 +28,35 @@ internal class Configuration
     public int Range { get; set; } = 62;
     [JsonProperty("无人自动关闭", Order = 9)]
     public bool AutoStopWhenEmpty { get; set; } = false;
-    [JsonProperty("需要电路", Order = 10)]
+    [JsonProperty("需要水量", Order = 10)]
+    public int NeedLiqStack { get; set; } = 75;
+    [JsonProperty("需要电路", Order = 11)]
     public bool NeedWiring { get; set; } = false;
-    [JsonProperty("无电钓鱼间隔", Order = 11)]
+    [JsonProperty("电路限频", Order = 12)]
+    public bool LimitFrames { get; set; } = false;
+    [JsonProperty("钓鱼间隔", Order = 13)]
     public string FishInterval { get; set; } = "60,240";
-    [JsonProperty("更新缓存秒数", Order = 12)]
-    public int UpdateInterval { get; set; } = 5;
-    [JsonProperty("保存缓存帧数", Order = 13)]
-    public int SaveInterval { get; set; } = 600;
-    [JsonProperty("鱼匣额外加成", Order = 14)]
-    public int CrateChanceBonus { get; set; } = 15;
-    [JsonProperty("渔力额外加成", Order = 15)]
-    public int PowerChanceBonus { get; set; } = 20;
-    [JsonProperty("允许钓出怪物", Order = 16)]
+    [JsonProperty("更新缓存秒数", Order = 14)]
+    public int UpdateInterval { get; set; } = 60;
+    [JsonProperty("靠近更新范围", Order = 15)]
+    public int UpdateTileRange { get; set; } = 20;
+    [JsonProperty("保存缓存秒数", Order = 16)]
+    public int SaveInterval { get; set; } = 60;
+    [JsonProperty("宝匣药水加成", Order = 17)]
+    public int CratePotionBonus { get; set; } = 15;
+    [JsonProperty("钓鱼药水加成", Order = 18)]
+    public int FishingPotionPower { get; set; } = 20;
+    [JsonProperty("鱼饵桶加成", Order = 19)]
+    public int ChumBucketPower { get; set; } = 10;
+    [JsonProperty("允许钓出怪物", Order = 20)]
     public bool EnableCustomNPC { get; set; } = true;
-    [JsonProperty("禁钓已有怪物", Order = 17)]
+    [JsonProperty("禁钓已有怪物", Order = 21)]
     public bool SoloCustomMonster { get; set; } = true;
-    [JsonProperty("禁钓模式(0不同类/1仅单挑)", Order = 18)]
+    [JsonProperty("禁钓模式(0不同类/1仅单挑)", Order = 22)]
     public int SoloMode { get; set; } = 0;
-    [JsonProperty("自定加成物品", Order = 19)]
+    [JsonProperty("永久渔力加成物品", Order = 23)]
     public Dictionary<int, int> CustomPowerItems { get; set; } = new();
-    [JsonProperty("自定义渔获表", Order = 20)]
+    [JsonProperty("自定义渔获表", Order = 24)]
     public List<CustomFishRule> CustomFishes { get; set; } = new();
 
     [JsonIgnore]
@@ -79,7 +85,7 @@ internal class Configuration
         Text = new List<string>()
         {
              "1.给玩家权限;/group addperm default afm.use",
-             "2.放个箱子,使用/afm s指令,再打开箱子",
+             "2.打开个箱子,使用/afm s指令",
              "3.给箱子放入鱼竿和鱼饵",
              "4.如果开启【需要电路】,则需要连上电线与计时器",
              "重置服务器时使用:/afm reset",
@@ -92,7 +98,6 @@ internal class Configuration
             { ItemID.AnglerEarring, 10 }, // 渔夫耳环 +10
             { ItemID.HighTestFishingLine, 10 }, // 优质钓线 +10
             { ItemID.AnglerTackleBag, 10 }, // 渔夫渔具袋 +10
-            { ItemID.FishingPotion, 20 },  // 钓鱼药水 +20
             { ItemID.AnglerHat, 5 }, // 渔夫帽 +5
             { ItemID.AnglerVest, 5 }, // 渔夫背心 +5
             { ItemID.AnglerPants, 5 },  // 渔夫裤 +5

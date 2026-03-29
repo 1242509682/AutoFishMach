@@ -28,9 +28,24 @@ internal class MyCommand
             case "set":
             case "选择":
                 {
+                    if (!plr.RealPlayer) return;
+
                     // 设置自定义数据标记，表示玩家正在等待打开箱子
-                    plr.SetData("set", true);
-                    plr.SendMessage(TextGradient("请打开一个箱子作为自动钓鱼机..."), color);
+                    if (plr.ActiveChest == -1)
+                    {
+                        plr.SetData("set", true);
+                        plr.SendMessage(TextGradient("请打开一个箱子作为自动钓鱼机..."), color);
+                        return;
+                    }
+
+                    var chest = Main.chest[plr.ActiveChest];
+                    if (chest == null) return;
+                    var pos = new Point(chest.x,chest.y);
+                    var data = DataManager.FindChest(plr.ActiveChest);
+                    if (data == null)
+                    {
+                        CreateData(plr, plr.ActiveChest, pos);
+                    }
                 }
                 break;
 
@@ -75,8 +90,20 @@ internal class MyCommand
             case "if":
             case "info":
                 {
-                    plr.SetData("info", true);
-                    plr.SendMessage(TextGradient("请打开要查看的钓鱼箱..."), color);
+                    if (!plr.RealPlayer) return;
+
+                    if (plr.ActiveChest == -1)
+                    {
+                        plr.SetData("info", true);
+                        plr.SendMessage(TextGradient("请打开要查看的钓鱼箱..."), color);
+                        return;
+                    }
+
+                    var chest = Main.chest[plr.ActiveChest];
+                    if (chest == null) return;
+                    var data = DataManager.FindChest(plr.ActiveChest);
+                    if (data == null) return;
+                    ShowMachineInfo(plr, data);
                 }
                 break;
 
@@ -95,21 +122,11 @@ internal class MyCommand
             case "exclude":
             case "排除":
                 {
-                    if (!plr.RealPlayer)
+                    bool flowControl = HandleExclude(args, plr);
+                    if (!flowControl)
                     {
-                        plr.SendErrorMessage("请进入游戏后手持物品再使用指令");
                         return;
                     }
-
-                    var heldItem = plr.SelectedItem;
-                    if (heldItem == null || heldItem.type == 0)
-                    {
-                        plr.SendErrorMessage("请手持一个物品");
-                        return;
-                    }
-
-                    plr.SetData("exc", true);
-                    plr.SendMessage(TextGradient("请打开要修改排除列表的钓鱼箱..."), color);
                 }
                 break;
 
@@ -157,12 +174,11 @@ internal class MyCommand
                             "[i:3456][C/F2F2C7:开发] [C/BFDFEA:by] [c/00FFFF:羽学] [i:3459]", color);
 
             var mess = new StringBuilder();
-            mess.AppendLine($"/{afm} s - 打开箱子设为自钓机");
-            mess.AppendLine($"/{afm} sv - 打开箱子添加/移除选择的自钓机");
-            mess.AppendLine($"/{afm} if - 打开箱子获取自钓机信息");
+            mess.AppendLine($"/{afm} s - 将箱子设为自钓机");
+            mess.AppendLine($"/{afm} if - 获取自钓机信息");
             mess.AppendLine($"/{afm} ls - 列出所有自钓机");
             mess.AppendLine($"/{afm} lt - 查看自定渔获");
-            mess.AppendLine($"/{afm} exc - 打开箱子添加/移除手上排除物品");
+            mess.AppendLine($"/{afm} exc - 批量修改排除物品表");
             if (IsAdmin(plr))
             {
                 mess.AppendLine($"/{afm} cd - 查看自定渔获条件");
@@ -187,11 +203,11 @@ internal class MyCommand
     #region 将高度等级转换为可读字符串
     public static string GetHeightName(int level) => level switch
     {
-        0 => "太空(0)",
-        1 => "地表(1)",
-        2 => "地下(2)",
-        3 => "洞穴(3)",
-        4 => "地狱(4)",
+        0 => "太空",
+        1 => "地表",
+        2 => "地下",
+        3 => "洞穴",
+        4 => "地狱",
         _ => "未知"
     };
     #endregion
@@ -200,59 +216,189 @@ internal class MyCommand
     public static void ShowMachineInfo(TSPlayer plr, MachData data)
     {
         // 确保环境最新
-        if (data.EnvDirty || (DateTime.UtcNow - data.LastEnvUpd).TotalSeconds > 5)
-            EnvManager.RefreshEnv(data);
-
-        // 实时统计水体（水、岩浆、蜂蜜）
-        int all = 0, water = 0, lava = 0, honey = 0;
-        EnvManager.NewGetLiquid(data, out water, out lava, out honey);
-        all = water + lava + honey;
+        EnvManager.RefreshEnv(data);
 
         // 大气因子
         float atmo = data.atmo;
 
+        // 液体需求
         int waterNeeded = (int)(300f * atmo);
-        float waterQuality = Math.Min(1f, (float)all / waterNeeded);
+        // 液体质量
+        float waterQuality = Math.Min(1f, (float)data.MaxLiq / waterNeeded);
 
-        // 基础渔力
-        int basePower = Config.PowerChanceBonus;
-        basePower += AutoFishing.GetRodPower(data);
-        // 更新所有物品缓存，data.BonusTotal 会被设置
-        EnvManager.UpdateMachineCache(data); 
-        basePower += data.BonusTotal;
+        // 基础渔力 鱼竿+鱼饵
+        int power = AutoFishing.GetRodPower(data) + AutoFishing.GetBaitPower(data);
+        power += data.ExtraPower;
 
-        int finalPower = (int)(basePower * waterQuality);
+        // 钓鱼药水临时加成（+20）
+        if (DateTime.UtcNow < data.FishingPotionTime) power += Config.FishingPotionPower;
+        // 鱼饵桶临时加成 +10
+        if (DateTime.UtcNow < data.ChumBucketTime) power += Config.ChumBucketPower;
+
+        // 含水鱼力
+        int finalPower = (int)(power * waterQuality);
 
         // 输出环境信息
-        plr.SendInfoMessage($"{data.Owner}钓鱼机信息:");
-
-        // 原始环境标志
-        plr.SendMessage($"沙漠:{(data.ZoneDesert ? "是" : "否")} 雪原:{(data.ZoneSnow ? "是" : "否")} 丛林:{(data.ZoneJungle ? "是" : "否")}", color);
-        plr.SendMessage($"腐化:{(data.ZoneCorrupt ? "是" : "否")} 猩红:{(data.ZoneCrimson ? "是" : "否")} 神圣:{(data.ZoneHallow ? "是" : "否")}", color);
-        plr.SendMessage($"海洋:{(data.ZoneBeach ? "是" : "否")} 地牢:{(data.ZoneDungeon ? "是" : "否")}", color);
-
-        if (data.ZoneCorrupt && data.ZoneCrimson)
-            plr.SendMessage("冲突:同时存在腐化和猩红，实际钓鱼时随机选择其一", color2);
-        if (data.ZoneJungle && data.ZoneSnow)
-            plr.SendMessage("冲突:同时存在丛林和雪地，实际钓鱼时随机选择其一（雪地优先）", color2);
-
+        plr.SendMessage($"《{data.Owner}的钓鱼机》", color2);
+        var mess = new StringBuilder();
         // 其他环境参数
-        plr.SendMessage($"高度等级:{GetHeightName(data.HeightLevel)}", color);
-        plr.SendMessage($"大气因子:{atmo:F2}", color);
-        plr.SendMessage($"水体统计: 水{water} 岩浆:{lava} 蜂蜜:{honey}", color);
-        plr.SendMessage($"需水体量:{waterNeeded}", color);
-        plr.SendMessage($"水体质量:{waterQuality:P0}", color);
-        plr.SendMessage($"无饵渔力:{basePower}", color);
-        plr.SendMessage($"含水渔力:{finalPower}", color);
-        plr.SendMessage($"熔岩钓鱼:{(data.CanFishInLava ? "是" : "否")}", color);
-        plr.SendMessage($"颠倒海洋:{(data.RolledRemixOcean ? "是" : "否")}", color);
+        mess.AppendLine($"当前人数:{data.PlayerCount}");
+        mess.AppendLine($"正钓液体:{data.LiqName}");
+        mess.AppendLine($"液体数量:{data.MaxLiq}");
+        mess.AppendLine($"需要电路:{(Config.NeedWiring ? "是" : "否")}");
+        mess.AppendLine($"钓任务鱼:{(Config.QuestFish ? "是" : "否")}");
+        mess.AppendLine($"液体统计: 水{data.WatCnt} 岩浆{data.LavCnt} 蜂蜜{data.HonCnt}");
+        mess.AppendLine($"液体需求:{waterNeeded}");
+        mess.AppendLine($"液体质量:{waterQuality:P0}");
+        mess.AppendLine($"基础渔力:{power}");
+        mess.AppendLine($"含水渔力:{finalPower}");
+        mess.AppendLine($"节省鱼饵:{(data.HasTackle ? "是" : "否")}");
+
+        // 宝匣药水
+        if (data.CratePotionTime > DateTime.UtcNow)
+            mess.AppendLine($"宝匣药水:剩余{(data.CratePotionTime - DateTime.UtcNow).TotalMinutes:F1}分钟");
+        else
+            mess.AppendLine($"宝匣药水:无");
+
+        // 钓鱼药水
+        if (data.FishingPotionTime > DateTime.UtcNow)
+            mess.AppendLine($"钓鱼药水:剩余{(data.FishingPotionTime - DateTime.UtcNow).TotalMinutes:F1}分钟");
+        else
+            mess.AppendLine($"钓鱼药水:无");
+
+        // 鱼饵桶
+        if (data.ChumBucketTime > DateTime.UtcNow)
+            mess.AppendLine($"鱼饵桶:剩余{(data.ChumBucketTime - DateTime.UtcNow).TotalMinutes:F1}分钟");
+        else
+            mess.AppendLine($"鱼饵桶:无");
+
+        mess.AppendLine($"熔岩钓鱼:{(data.CanFishInLava ? "是" : "否")}");
+        mess.AppendLine($"颠倒海洋:{(data.RolledRemixOcean ? "是" : "否")}");
+        mess.AppendLine($"自动整理:{(Config.AutoPut ? "是" : "否")}");
+        mess.AppendLine($"区域保护:{(Config.DisabledBuild ? "是" : "否")}");
+        mess.AppendLine($"区域范围:{Config.Range}格");
+        mess.AppendLine($"无人关闭:{(Config.AutoStopWhenEmpty ? "是" : "否")}");
+        mess.AppendLine($"允许怪物:{(Config.EnableCustomNPC ? "是" : "否")}");
+        mess.AppendLine($"禁钓多怪:{(Config.SoloCustomMonster ? "是" : "否")}");
+        mess.AppendLine($"钓怪模式:{(Config.SoloMode == 0 ? "不同类各1个" : "只钓1个")}");
+
+        var env = new List<string>();
+        var env2 = MyCommand.GetHeightName(data.HeightLevel);
+        if (data.ZoneHallow) env.Add("神圣");
+        if (data.ZoneCorrupt) env.Add("腐化");
+        if (data.ZoneCrimson) env.Add("猩红");
+        if (data.ZoneJungle) env.Add("丛林");
+        if (data.ZoneSnow) env.Add("雪原");
+        if (data.ZoneDesert) env.Add("沙漠");
+        if (data.ZoneBeach) env.Add("海洋");
+        if (data.ZoneDungeon) env.Add("地牢");
+        if (data.RolledRemixOcean) env.Add("颠倒海洋");
+        mess.AppendLine($"钓鱼环境:{env2},{string.Join(",", env)}");
+        plr.SendMessage(TextGradient(mess.ToString()), color2);
 
         // 显示排除物品列表
-        string excludeText = data.Exclude.Count > 0
-            ? string.Join(", ", data.Exclude.Select(id => $"{ItemIcon(id, 1)}"))
-            : "无";
-        plr.SendMessage($"排除物品: {excludeText}", color);
-    } 
+        string NoItem = data.Exclude.Count > 0 ? string.Join(", ", data.Exclude.Select(id => $"{ItemIcon(id, 1)}")) : "无";
+        plr.SendMessage($"排除物品: {NoItem}", color2);
+    }
+    #endregion
+
+    #region 排除表操作指令方法
+    private static bool HandleExclude(CommandArgs args, TSPlayer plr)
+    {
+        if (!plr.RealPlayer)
+        {
+            plr.SendErrorMessage("请进入游戏后再使用指令");
+            return false;
+        }
+
+        // 无参数：进入记录模式
+        if (args.Parameters.Count == 1)
+        {
+            // 创建该玩家的列表
+            if (!pend.ContainsKey(plr.Name))
+                pend[plr.Name] = new HashSet<int>();
+
+            // 显示帮助
+            ShowExcludeHelp(plr);
+            return false;
+        }
+
+        string sub = args.Parameters[1].ToLower();
+        if (sub != "add" && sub != "del")
+        {
+
+            pend.Remove(plr.Name); // 清除模式
+            return false;
+        }
+
+        if (!pend.TryGetValue(plr.Name, out var set) || set.Count == 0)
+        {
+            plr.SendErrorMessage("没有待处理的物品，请先放入物品到钓鱼箱中。");
+            return false;
+        }
+
+        // 获取当前打开的箱子
+        var data = DataManager.FindChest(plr.ActiveChest);
+        if (data == null)
+        {
+            plr.SendErrorMessage("请先打开要修改的钓鱼机箱子");
+            return false;
+        }
+
+        // 权限检查
+        if (!IsAdmin(plr) && data.Owner != plr.Name)
+        {
+            plr.SendErrorMessage($"你没有权限修改{data.Owner}的钓鱼机排除表");
+            pend.Remove(plr.Name);
+            return false;
+        }
+
+        var yes = new List<string>();
+        var no = new List<string>();
+        bool isAdd = sub == "add";
+        foreach (var type in set)
+        {
+            if (isAdd)
+            {
+                if (data.Exclude.Add(type))
+                    yes.Add(ItemIcon(type));
+            }
+            else // 删除
+            {
+                if (data.Exclude.Remove(type))
+                    no.Add(ItemIcon(type));
+            }
+        }
+
+        CanSave = true;
+        Save();
+        pend.Remove(plr.Name);
+        string NoItem = data.Exclude.Count > 0 ? string.Join(", ", data.Exclude.Select(id => $"{ItemIcon(id)}")) : "无";
+        plr.SendMessage($"\n更新后的排除物品表: {NoItem}", color2);
+        if (yes.Count > 0)
+            plr.SendMessage(TextGradient($"[c/47D3C3:本次添加]:{string.Join(",", yes)}"), color2);
+        if (no.Count > 0)
+            plr.SendMessage(TextGradient($"[c/47D3C3:本次删除]:{string.Join(",", no)}"), color2);
+        return true;
+    }
+
+    private static void ShowExcludeHelp(TSPlayer plr)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"\n[c/47D3C3:自动钓鱼机 - 批量排除管理]");
+        sb.AppendLine($"[c/55CDFF:•] /{afm} exc - 进入批量记录模式");
+        sb.AppendLine($"[c/55CDFF:•] 在钓鱼箱中放入需要操作的物品");
+        sb.AppendLine($"[c/55CDFF:•] /{afm} exc add - 批量添加到排除表");
+        sb.AppendLine($"[c/55CDFF:•] /{afm} exc del - 批量所有物品从排除表移除");
+        plr.SendMessage(TextGradient(sb.ToString()), color);
+
+        // 显示排除物品列表
+        plr.SendMessage($"已进入批量排除模式，请将物品放入钓鱼箱中。", color2);
+        var data = DataManager.FindRegion(plr.CurrentRegion.Name);
+        if (data == null) return;
+        string NoItem = data.Exclude.Count > 0 ? string.Join(", ", data.Exclude.Select(id => $"{ItemIcon(id)}")) : "无";
+        plr.SendMessage($"当前排除物品: {NoItem}", color2);
+    }
     #endregion
 
     #region 根据手持物品管理自定义渔获（管理员）
@@ -617,4 +763,5 @@ internal class MyCommand
         plr.SendMessage(TextGradient(sb.ToString()), color);
     }
     #endregion
+
 }

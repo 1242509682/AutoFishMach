@@ -11,29 +11,23 @@ public static class EnvManager
     #region 刷新机器的环境缓存（无需玩家对象）
     public static void RefreshEnv(MachData data)
     {
-        // 计算生物群落（使用临时玩家模拟）
-        SetupTempPlayer(data);
-        data.ZoneCorrupt = TempPlayer.ZoneCorrupt;
-        data.ZoneCrimson = TempPlayer.ZoneCrimson;
-        data.ZoneJungle = TempPlayer.ZoneJungle;
-        data.ZoneSnow = TempPlayer.ZoneSnow;
-        data.ZoneHallow = TempPlayer.ZoneHallow;
-        data.ZoneDesert = TempPlayer.ZoneDesert;
-        data.ZoneBeach = TempPlayer.ZoneBeach;
-        data.ZoneDungeon = TempPlayer.ZoneDungeon;
+        // 初始化设置一次,其他时候不设置
+        if (data.IntMach)
+        {
+            // 高度等级
+            int yPos = data.Pos.Y;
+            if (Main.remixWorld)
+                data.HeightLevel = yPos < Main.worldSurface * 0.5 ? 0 : yPos < Main.worldSurface ? 1 : yPos < Main.rockLayer ? 3 : yPos < Main.maxTilesY - 300 ? 2 : 4;
+            else
+                data.HeightLevel = yPos < Main.worldSurface * 0.5 ? 0 : yPos < Main.worldSurface ? 1 : yPos < Main.rockLayer ? 2 : yPos < Main.maxTilesY - 300 ? 3 : 4;
 
-        // 高度等级
-        int yPos = data.Pos.Y;
-        if (Main.remixWorld)
-            data.HeightLevel = yPos < Main.worldSurface * 0.5 ? 0 : yPos < Main.worldSurface ? 1 : yPos < Main.rockLayer ? 3 : yPos < Main.maxTilesY - 300 ? 2 : 4;
-        else
-            data.HeightLevel = yPos < Main.worldSurface * 0.5 ? 0 : yPos < Main.worldSurface ? 1 : yPos < Main.rockLayer ? 2 : yPos < Main.maxTilesY - 300 ? 3 : 4;
+            // 大气因子
+            data.atmo = GetAtmo(yPos);
 
-        // 大气因子
-        data.atmo = GetAtmo(yPos);
-
-        // 颠倒海洋
-        data.RolledRemixOcean = Main.remixWorld && data.HeightLevel == 1 && yPos >= Main.rockLayer && Main.rand.Next(3) == 0;
+            // 颠倒海洋
+            data.RolledRemixOcean = Main.remixWorld && data.HeightLevel == 1 && yPos >= Main.rockLayer && Main.rand.Next(3) == 0;
+            data.IntMach = false;
+        }
 
         // 水体统计
         data.LiquidPos = NewGetLiquid(data, out int water, out int lava, out int honey);
@@ -43,14 +37,10 @@ public static class EnvManager
 
         // 记录数量最多的水体
         data.MaxLiq = Math.Max(water, Math.Max(lava, honey));
-        data.LiqName = water >= data.MaxLiq ? "水" : lava >= data.MaxLiq ? "岩浆" : honey >= data.MaxLiq  ? "蜂蜜" : "";
+        data.LiqName = water >= data.MaxLiq ? "水" : lava >= data.MaxLiq ? "岩浆" : honey >= data.MaxLiq ? "蜂蜜" : string.Empty;
 
         // 一次性刷新所有物品相关缓存
         UpdateMachineCache(data);
-
-        // 标记环境已更新
-        data.EnvDirty = false;
-        data.LastEnvUpd = DateTime.UtcNow;
     }
     #endregion
 
@@ -59,57 +49,59 @@ public static class EnvManager
     public static void UpdateMachineCache(MachData data)
     {
         // 重置所有缓存
-        data.BonusTotal = 0;
-        data.HasCratePotion = false;
+        data.ExtraPower = 0;
         data.CanFishInLava = false;
         data.HasTackle = false;
-        data.RodChest = -1;
+
+        // 统一：-1 = 未缓存/需查找，-2 = 确认无物品
+        // 先设为 -1，扫描后会根据结果改为实际槽位或 -2
         data.RodSlot = -1;
-        data.BaitChest = -1;
         data.BaitSlot = -1;
+        data.CratePotionSlot = -1;
+        data.FishingPotionSlot = -1;
+        data.ChumBucketSlot = -1;
 
-        // 只扫描主箱子
-        if (data.ChestIndex != -1)
+        var chest = Main.chest[data.ChestIndex];
+        for (int s = 0; s < chest.item.Length; s++)
         {
-            var chest = Main.chest[data.ChestIndex];
-            if (chest != null && chest.x == data.Pos.X && chest.y == data.Pos.Y)
-            {
-                for (int s = 0; s < chest.item.Length; s++)
-                {
-                    var item = chest.item[s];
-                    if (item == null || item.IsAir) continue;
+            var item = chest.item[s];
+            if (item == null || item.IsAir) continue;
 
-                    // 渔力加成道具
-                    if (Config.CustomPowerItems.TryGetValue(item.type, out int power))
-                        data.BonusTotal += power;
+            // 鱼竿缓存
+            if (data.RodSlot == -1 && item.fishingPole > 0)
+                data.RodSlot = s;
 
-                    // 宝匣药水
-                    if (item.type == ItemID.CratePotion)
-                        data.HasCratePotion = true;
+            // 鱼饵缓存
+            if (data.BaitSlot == -1 && item.bait > 0)
+                data.BaitSlot = s;
 
-                    // 熔岩钓鱼道具
-                    if (lavaItems.Contains(item.type))
-                        data.CanFishInLava = true;
+            // 宝匣药水缓存
+            if (data.CratePotionSlot == -1 && item.type == ItemID.CratePotion)
+                data.CratePotionSlot = s;
 
-                    // 钓具箱/渔夫渔具袋
-                    if (item.type == ItemID.TackleBox || item.type == ItemID.AnglerTackleBag)
-                        data.HasTackle = true;
+            // 钓鱼药水缓存
+            if (data.FishingPotionSlot == -1 && item.type == ItemID.FishingPotion)
+                data.FishingPotionSlot = s;
 
-                    // 鱼竿缓存（第一个找到的）
-                    if (data.RodChest == -1 && item.fishingPole > 0)
-                    {
-                        data.RodChest = chest.index;
-                        data.RodSlot = s;
-                    }
+            // 鱼饵桶缓存
+            if (data.ChumBucketSlot == -1 && item.type == ItemID.ChumBucket)
+                data.ChumBucketSlot = s;
 
-                    // 鱼饵缓存（第一个找到的）
-                    if (data.BaitChest == -1 && item.bait > 0)
-                    {
-                        data.BaitChest = chest.index;
-                        data.BaitSlot = s;
-                    }
-                }
-            }
+            // 渔力加成道具（排除消耗型药水）
+            if (item.type != ItemID.FishingPotion &&
+                item.type != ItemID.CratePotion &&
+                Config.CustomPowerItems.TryGetValue(item.type, out int power))
+                data.ExtraPower += power;
+
+            // 熔岩钓鱼道具
+            if (lavaItems.Contains(item.type))
+                data.CanFishInLava = true;
+
+            // 钓具箱/渔夫渔具袋
+            if (item.type == ItemID.TackleBox ||
+                item.type == ItemID.AnglerTackleBag ||
+                item.type == ItemID.LavaproofTackleBag)
+                data.HasTackle = true;
         }
     }
     #endregion
@@ -127,7 +119,7 @@ public static class EnvManager
         plr.ZoneHallow = data.ZoneHallow;
         plr.ZoneDesert = data.ZoneDesert;
         plr.ZoneBeach = data.ZoneBeach;
-        plr.ZoneRain = true;
+        plr.ZoneRain = data.ZoneRain;
 
         int hl = data.HeightLevel;
         plr.ZoneSkyHeight = hl == 0;
@@ -138,7 +130,7 @@ public static class EnvManager
     }
     #endregion
 
-    #region 统计半径内的水体，并返回最大连通水体的最近点（用于生成NPC等）
+    #region 统计半径内的水体，并返回最大连通水体的最近点（用于生成物品与NPC等）
     public static Point NewGetLiquid(MachData data, out int water, out int lava, out int honey)
     {
         // 获取区域边界（若区域不存在则回退到旧方法）
@@ -173,7 +165,7 @@ public static class EnvManager
                         if (distSq < distWaterSq)
                         {
                             distWaterSq = distSq;
-                            bestWater = new Point(x, y + 3);
+                            bestWater = new Point(x, y + 1);
                         }
                     }
                     else if (tile.liquidType() == LiquidID.Lava)
@@ -183,7 +175,7 @@ public static class EnvManager
                         if (distSq < distLavaSq)
                         {
                             distLavaSq = distSq;
-                            bestLava = new Point(x, y + 3);
+                            bestLava = new Point(x, y + 1);
                         }
                     }
                     else if (tile.liquidType() == LiquidID.Honey)
@@ -193,7 +185,7 @@ public static class EnvManager
                         if (distSq < distHoneySq)
                         {
                             distHoneySq = distSq;
-                            bestHoney = new Point(x, y + 3);
+                            bestHoney = new Point(x, y + 1);
                         }
                     }
                 }
@@ -209,12 +201,12 @@ public static class EnvManager
     }
     #endregion
 
-    #region 快速检查区域内是否有任意液体达到指定阈值，并返回达标液体的数量（创建时使用）
+    #region 快速检查区域内是否有任意液体达到指定阈值，并返回达标液体的数量（创建钓鱼机时使用）
     public static int QuickLiquidCheck(Point center, ref string name)
     {
         name = "无";
         int radius = Config.Range;
-        int total = 75;
+        int total = Config.NeedLiqStack;
         int minX = Math.Max(center.X - radius, 0);
         int maxX = Math.Min(center.X + radius, Main.maxTilesX - 1);
         int minY = Math.Max(center.Y - radius, 0);
