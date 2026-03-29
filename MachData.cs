@@ -1,5 +1,6 @@
 ﻿using Microsoft.Xna.Framework;
 using Newtonsoft.Json;
+using TShockAPI;
 
 namespace FishMach;
 
@@ -82,6 +83,14 @@ public class MachData
     [JsonIgnore]
     public DateTime ChumBucketTime { get; set; } = DateTime.MinValue;  // 效果过期时间
 
+    // 自定义消耗物品与对应BUFF和玩家表
+    [JsonIgnore]
+    public Dictionary<int, (int Slot, DateTime Expiry, int Bonus)> CustomConsumables { get; set; } = new();
+    [JsonIgnore]
+    public Dictionary<int, DateTime> ActiveZoneBuffs { get; set; } = new();
+    [JsonIgnore]
+    public HashSet<TSPlayer> RegionPlayers { get; set; } = new();
+
     // 可以钓岩浆
     [JsonIgnore]
     public bool CanFishInLava { get; set; }
@@ -93,10 +102,6 @@ public class MachData
     // 环境需要更新标志
     [JsonIgnore]
     public DateTime LastEnvUpdate = DateTime.MinValue;
-
-    // 区域玩家计数
-    [JsonIgnore]
-    public int PlayerCount { get; set; } = 0;
 
     // 液体数量
     [JsonIgnore]

@@ -957,6 +957,18 @@ internal class Utils
     "沙尘暴", "天空", "微光",
     // 月相
     "满月", "亏凸月", "下弦月", "残月", "新月", "娥眉月", "上弦月", "盈凸月"
-    }; 
+    };
+    #endregion
+
+    #region 格式化剩余分钟数为可读字符串
+    public static string FormatRemaining(double minutes)
+    {
+        if (minutes < 0) return "0秒";
+        int totalSec = (int)(minutes * 60);
+        if (totalSec < 1) return "1秒";
+        if (totalSec < 60) return $"{totalSec}秒";
+        if (totalSec < 3600) return $"{totalSec / 60}分{totalSec % 60:D2}秒";
+        return $"{totalSec / 3600}时{(totalSec % 3600) / 60}分{totalSec % 60:D2}秒";
+    } 
     #endregion
 }

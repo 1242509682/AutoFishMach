@@ -1,4 +1,6 @@
-﻿using Microsoft.Xna.Framework;
+﻿using System.Linq;
+using System.Text;
+using Microsoft.Xna.Framework;
 using Terraria;
 using Terraria.GameContent.FishDropRules;
 using TerrariaApi.Server;
@@ -16,7 +18,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     public static string PluginName => "自动钓鱼机";
     public override string Name => PluginName;
     public override string Author => "羽学";
-    public override Version Version => new(1, 0, 7);
+    public override Version Version => new(1, 0, 8);
     public override string Description => "使用/afm 指令指定一个箱子作为自动钓鱼机";
     #endregion
 
@@ -51,6 +53,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         GetDataHandlers.ChestItemChange += OnChestItemChange!;
         GetDataHandlers.ChestOpen += OnChestOpen!;
         GetDataHandlers.PlayerZone += OnPlayerZone;
+        GetDataHandlers.PlayerBuffUpdate += OnPlayerBuffUpdate;
         On.Terraria.Wiring.Hopper += OnHopper;
         RegionHooks.RegionEntered += OnRegionEnter;
         RegionHooks.RegionLeft += OnRegionLeave;
@@ -70,6 +73,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             GetDataHandlers.ChestItemChange -= OnChestItemChange!;
             GetDataHandlers.ChestOpen -= OnChestOpen!;
             GetDataHandlers.PlayerZone -= OnPlayerZone;
+            GetDataHandlers.PlayerBuffUpdate -= OnPlayerBuffUpdate;
             On.Terraria.Wiring.Hopper -= OnHopper;
             RegionHooks.RegionEntered -= OnRegionEnter;
             RegionHooks.RegionLeft -= OnRegionLeave;
@@ -99,6 +103,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             Config = Configuration.Read(); // 读取配置（内部会创建默认配置）
             Config.ParseFrames(); // 解析钓鱼间隔字符串（如 "60" 或 "60,180"）
             Config.AutoDesc(); // 自动描述
+            Config.AutoFillNames(); // 自动写物品名
             Config.Write(); // 写回（确保配置存在）
 
             RuleList = new FishDropRuleList();
@@ -128,7 +133,6 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         // 加载配置文件
         LoadConfig();
 
-
         // 初始化所有机器的下次执行时间（如果为0）
         foreach (var data in DataManager.Machines)
         {
@@ -139,7 +143,6 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             if (data.nextFrame == 0)
                 data.nextFrame = Timer + delay;
         }
-
     }
     #endregion
 
@@ -327,6 +330,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     #region 区域进出事件
     private void OnRegionEnter(RegionHooks.RegionEnteredEventArgs args)
     {
+        if (!Config.Enabled) return;
+
         if (!IsAfmRegion(args.Region.Name)) return;
         var data = DataManager.FindRegion(args.Region.Name);
         if (data == null)
@@ -336,8 +341,12 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             return;
         }
 
-        data.PlayerCount++;
-        FixPlayerCount(data); //自动修正区域人数
+        // 添加到区域玩家集合
+        if (!data.RegionPlayers.Contains(args.Player))
+            data.RegionPlayers.Add(args.Player);
+
+        // 立即刷新一次BUFF
+        RefreshBuffs(args.Player, data);
 
         // 玩家进入时整理一次箱子
         if (Config.AutoPut)
@@ -364,11 +373,49 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             if (data.ZoneDungeon) env.Add("地牢");
             if (data.RolledRemixOcean) env.Add("颠倒海洋");
 
-            args.Player.SendMessage(TextGradient($"\n欢迎来到{data.Owner}的自动钓鱼机区域"), color);
-            args.Player.SendMessage(TextGradient($"钓鱼环境:{env2},{string.Join(",", env)}"), color);
+            // 计算当前渔力
+            int rodPower = AutoFishing.GetRodPower(data);
+            int baitPower = AutoFishing.GetBaitPower(data);
+            int extraPower = data.ExtraPower;
+            int tempPower = 0;
+            if (DateTime.UtcNow < data.FishingPotionTime) tempPower += Config.FishingPotionPower;
+            if (DateTime.UtcNow < data.ChumBucketTime) tempPower += Config.ChumBucketPower;
+            if (Config.CustomUsedItem.Count > 0)
+                foreach (var UsedItem in Config.CustomUsedItem)
+                    if (data.CustomConsumables.TryGetValue(UsedItem.ItemType, out var state) && state.Expiry > DateTime.UtcNow)
+                        tempPower += state.Bonus;
+            int Power = rodPower + baitPower + extraPower + tempPower;
 
-            if (data.PlayerCount > 0)
-                args.Player.SendMessage(TextGradient($"区域有{data.PlayerCount}个玩家在钓{data.LiqName}\n"), color);
+            var PowerText = string.Empty;
+            if (Power > 0)
+                PowerText = TextGradient($"渔力:{Power}");
+
+            args.Player.SendMessage(TextGradient($"欢迎来到[c/E8EB6E:{data.Owner}]的自动钓鱼机 当前 [c/FF716D:{data.RegionPlayers.Count}] 人"), color);
+            args.Player.SendMessage(TextGradient($"环境:{env2},{string.Join(",", env)}"), color);
+            args.Player.SendMessage(TextGradient($"在钓 {data.LiqName} [c/61BFE2:{data.MaxLiq}] 格 {PowerText}"), color);
+
+            if (data.Exclude.Count > 0)
+                args.Player.SendMessage($"排除物品: {string.Join(", ", data.Exclude.Select(id => $"{ItemIcon(id)}"))}", color2);
+
+            var mess = new StringBuilder();
+            if (Config.CustomUsedItem.Count > 0)
+            {
+                int idx = 1;
+                mess.AppendLine($"区域buff:");
+                foreach (var UsedItem in Config.CustomUsedItem)
+                    if (data.CustomConsumables.TryGetValue(UsedItem.ItemType, out var state) && state.Expiry > DateTime.UtcNow)
+                    {
+                        double min = (state.Expiry - DateTime.UtcNow).TotalMinutes;
+                        if (UsedItem.BuffID > 0)
+                        {
+                            string buffName = $"{UsedItem.BuffName}";
+                            string buffDesc = $"[c/5F9DB8:-] {UsedItem.BuffDesc}";
+                            mess.AppendLine($"{idx}.{buffName} 剩余[c/61BBE2:{FormatRemaining(min)}] \n{buffDesc}");
+                            idx++;
+                        }
+                    }
+            }
+            args.Player.SendMessage(TextGradient(mess.ToString()), color);
         }
 
         DataManager.CanSave = true;
@@ -376,6 +423,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
 
     private void OnRegionLeave(RegionHooks.RegionLeftEventArgs args)
     {
+        if (!Config.Enabled) return;
+
         if (!IsAfmRegion(args.Region.Name)) return;
         var plr = args.Player;
         if (plr == null || !plr.Active) return;
@@ -388,11 +437,11 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             return;
         }
 
-        data.PlayerCount--;
-        FixPlayerCount(data);
-
         if (pend.ContainsKey(plr.Name))
             pend.Remove(plr.Name);
+
+        if (data.RegionPlayers.Contains(plr))
+            data.RegionPlayers.Remove(plr);
 
         // 玩家离开时整理一次箱子
         if (Config.AutoPut)
@@ -406,10 +455,10 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         }
 
         if (Config.RegionBroadcast)
-            plr.SendMessage(TextGradient($"\n你离开了{data.Owner}的自动钓鱼机区域"), color);
+            plr.SendMessage(TextGradient($"你离开了{data.Owner}的自动钓鱼机区域\n"), color);
 
         // 无人自动关闭检查
-        if (Config.AutoStopWhenEmpty && data.PlayerCount == 0)
+        if (Config.AutoStopWhenEmpty && data.RegionPlayers.Count == 0)
             plr.SendMessage(TextGradient($"【{data.Owner}自钓机】检测到附近没有玩家自动关闭"), color);
 
         DataManager.CanSave = true;
@@ -417,6 +466,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
 
     private void OnServerLeave(LeaveEventArgs args)
     {
+        if (!Config.Enabled) return;
+
         var plr = TShock.Players[args.Who];
         if (plr == null || !IsAfmRegion(plr.CurrentRegion.Name)) return;
 
@@ -428,21 +479,52 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         if (pend.ContainsKey(plr.Name))
             pend.Remove(plr.Name);
 
-
         var data = DataManager.FindRegion(plr.CurrentRegion.Name);
         if (data == null || plr.CurrentRegion.Name != data.RegName) return;
-        var ActiveCount = TShock.Utils.GetActivePlayerCount();
-        data.PlayerCount--;
-        FixPlayerCount(data);
+        if (data.RegionPlayers.Contains(plr))
+            data.RegionPlayers.Remove(plr);
         UpdateData(data, plr.TPlayer);
         DataManager.CanSave = true;
     }
+    #endregion
 
-    private static void FixPlayerCount(MachData data)
+    #region 玩家Buff更新事件（刷新区域Buff用）
+    private void OnPlayerBuffUpdate(object sender, PlayerBuffUpdateEventArgs args)
     {
-        var max = TShock.Utils.GetActivePlayerCount();
-        if (data.PlayerCount < 0) data.PlayerCount = 0;
-        if (data.PlayerCount > max) data.PlayerCount = max;
+        if (!Config.Enabled || !Config.RegionBuffEnabled) return;
+
+        args.Handled = true;
+
+        var plr = args.Player;
+        if (plr == null || !plr.Active) return;
+
+        var data = GetDataByXY(plr.TileX, plr.TileY);
+        if (data == null) return;
+        RefreshBuffs(plr, data);
+    }
+    #endregion
+
+    #region 刷新buff方法（由进入事件和Buff更新事件来驱动）
+    public static void RefreshBuffs(TSPlayer plr, MachData data)
+    {
+        if (!Config.RegionBuffEnabled) return;
+        if (!plr.Active || !data.RegionPlayers.Contains(plr)) return; // 玩家不在区域内，不刷新
+
+        // 清理过期的BUFF
+        var expired = data.ActiveZoneBuffs
+            .Where(kvp => kvp.Value <= DateTime.UtcNow)
+            .Select(kvp => kvp.Key)
+            .ToList();
+
+        foreach (var buffId in expired)
+            data.ActiveZoneBuffs.Remove(buffId);
+
+        // 刷新有效BUFF
+        foreach (var kvp in data.ActiveZoneBuffs)
+        {
+            if (kvp.Value > DateTime.UtcNow)
+                plr.SetBuff(kvp.Key, 300); // 5秒刷新一次，实际会持续到过期
+        }
     }
     #endregion
 
@@ -482,22 +564,6 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     }
     #endregion
 
-    #region 检查箱子位置是否有电线（2x2区域）
-    private static bool HasWiring(Point pos)
-    {
-        for (int x = pos.X; x < pos.X + 2; x++)
-        {
-            for (int y = pos.Y; y < pos.Y + 2; y++)
-            {
-                var tile = Main.tile[x, y];
-                if (tile != null && (tile.wire() || tile.wire2() || tile.wire3() || tile.wire4()))
-                    return true;
-            }
-        }
-        return false;
-    }
-    #endregion
-
     #region 创建数据
     public static void CreateData(TSPlayer plr, int index, Point pos)
     {
@@ -531,8 +597,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         }
 
         // 检查水体是否充足(不考虑连通性,UpdateData方法内部会缓存已连通的水域)
-        var LiqName = string.Empty;
-        var Liq = EnvManager.QuickLiquidCheck(pos, ref LiqName);
+        var Liq = EnvManager.QuickLiquidCheck(pos);
         if (Liq < Config.NeedLiqStack)
         {
             plr.SendMessage($"箱子附近{Config.Range}格内液体不足{Config.NeedLiqStack}格", color2);
@@ -562,10 +627,22 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         };
 
         UpdateData(NewData, plr.TPlayer);
-        var NeedWiring = Config.NeedWiring ? $"并[c/FF716D:连上电线]与计时器" : "\n";
-        plr.SendMessage(TextGradient($"\n{plr.Name}的自动钓鱼机 ({pos.X},{pos.Y}) 创建成功! "), color);
-        plr.SendMessage(TextGradient($"附近{Config.Range}格[c/FF716D:最多的液体]：{LiqName}"), color);
-        plr.SendMessage(TextGradient($"请给箱子放入鱼竿和鱼饵 {NeedWiring}"), color);
+    }
+    #endregion
+
+    #region 检查箱子位置是否有电线（2x2区域）
+    private static bool HasWiring(Point pos)
+    {
+        for (int x = pos.X; x < pos.X + 2; x++)
+        {
+            for (int y = pos.Y; y < pos.Y + 2; y++)
+            {
+                var tile = Main.tile[x, y];
+                if (tile != null && (tile.wire() || tile.wire2() || tile.wire3() || tile.wire4()))
+                    return true;
+            }
+        }
+        return false;
     }
     #endregion
 

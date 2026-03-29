@@ -1,8 +1,10 @@
 ﻿using Microsoft.Xna.Framework;
 using Terraria;
 using Terraria.DataStructures;
+using Terraria.GameContent.Drawing;
 using Terraria.GameContent.FishDropRules;
 using Terraria.ID;
+using Terraria.Localization;
 using TShockAPI;
 using static FishMach.Plugin;
 using static FishMach.Utils;
@@ -22,7 +24,7 @@ public class AutoFishing
     public bool Execute()
     {
         // 无人自动关闭检查
-        if (Config.AutoStopWhenEmpty && data.PlayerCount == 0)
+        if (Config.AutoStopWhenEmpty && data.RegionPlayers.Count == 0)
             return false;
 
         // 1. 鱼竿
@@ -32,7 +34,7 @@ public class AutoFishing
             if (Config.Broadcast && !data.RodBroadcast)
             {
                 data.RodBroadcast = true;
-                var text = $"{data.Owner}的钓鱼机缺少鱼竿，请放入鱼竿\n传送到钓鱼机:/tppos {data.Pos.X} {data.Pos.Y}\n";
+                var text = $"{data.Owner}的钓鱼机 [c/FF716D:缺少鱼竿]\n前往放入[c/FF716D:鱼竿]:/tppos {data.Pos.X} {data.Pos.Y}\n";
                 TSPlayer.All.SendMessage(TextGradient(text), color);
             }
             return false;
@@ -45,55 +47,39 @@ public class AutoFishing
             if (Config.Broadcast && !data.BaitBroadcast)
             {
                 data.BaitBroadcast = true;
-                var text = $"{data.Owner}的钓鱼机缺少鱼饵，请放入鱼饵\n传送到钓鱼机:/tppos {data.Pos.X} {data.Pos.Y}\n";
+                var text = $"{data.Owner}的钓鱼机 [c/FF716D:缺少鱼饵]\n前往放入[c/FF716D:鱼饵]:/tppos {data.Pos.X} {data.Pos.Y}\n";
                 TSPlayer.All.SendMessage(TextGradient(text), color);
             }
             return false;
         }
         data.BaitBroadcast = false;
 
-        // 3. 检查并消耗宝匣药水
-        var CratePotionSlot = data.CratePotionSlot;
-        var CratePotionTime = data.CratePotionTime;
-        ConsumeItem(ItemID.CratePotion, ref CratePotionSlot, ref CratePotionTime, 4, "宝匣药水");
-        data.CratePotionSlot = CratePotionSlot;
-        data.CratePotionTime = CratePotionTime;
+        // 3. 使用消耗物品并返回额外临时鱼力
+        int UsedBonus = UesdItem();
 
-        // 4. 检查并消耗钓鱼药水
-        var FishingPotionSlot = data.FishingPotionSlot;
-        var FishingPotionTime = data.FishingPotionTime;
-        ConsumeItem(ItemID.FishingPotion, ref FishingPotionSlot, ref FishingPotionTime, 8, "钓鱼药水");
-        data.FishingPotionSlot = FishingPotionSlot;
-        data.FishingPotionTime = FishingPotionTime;
-
-        // 5. 检查并消耗鱼饵桶
-        var ChumBucketSlot = data.ChumBucketSlot;
-        var ChumBucketTime = data.ChumBucketTime;
-        ConsumeItem(ItemID.ChumBucket, ref ChumBucketSlot, ref ChumBucketTime, 10, "鱼饵桶");
-        data.ChumBucketSlot = ChumBucketSlot;
-        data.ChumBucketTime = ChumBucketTime;
-
-        // 6. 渔力计算
+        // 4. 渔力计算
         int power = rodItem.fishingPole + baitItem.bait;
-        power += data.ExtraPower;
+        power += data.ExtraPower + UsedBonus;
 
         // 钓鱼药水临时加成（+20）
-        if (DateTime.UtcNow < data.FishingPotionTime) power += Config.FishingPotionPower;
+        if (DateTime.UtcNow < data.FishingPotionTime)
+            power += Config.FishingPotionPower;
 
         // 鱼饵桶临时加成（+10）
-        if (DateTime.UtcNow < data.ChumBucketTime) power += Config.ChumBucketPower;
+        if (DateTime.UtcNow < data.ChumBucketTime)
+            power += Config.ChumBucketPower;
 
-        // 7. 消耗鱼饵
+        // 5. 消耗鱼饵
         if (!ConsumeBait(baitSlot, baitItem, power))
             return false;
 
-        // 8. 自定义渔获
+        // 6. 自定义渔获
         bool allow = false;
         if (Config.CustomFishes.Any())
             CustomFishes(rodItem, ref allow);
         if (allow) return true;
 
-        // 9. 原版渔获
+        // 7. 原版渔获
         var context = BuildFishingContext(power, rodItem, baitItem);
         int itemType = RuleList.TryGetItemDropType(context);
         if (itemType == 0) return false;
@@ -104,7 +90,7 @@ public class AutoFishing
 
         if (data.Exclude.Contains(fish.type)) return false;
 
-        // 10. 放入箱子
+        // 8. 放入箱子
         PutToChest(fish);
         return true;
     }
@@ -201,10 +187,6 @@ public class AutoFishing
                 Cache = i;
                 item = foundItem;
                 slot = i;
-
-                // 广播提示
-                if (Config.Broadcast)
-                    TSPlayer.All.SendMessage(TextGradient($"{data.Owner}的钓鱼机已找到{ItemName}:{foundItem.Name}\n"), color);
                 return true;
             }
         }
@@ -215,8 +197,56 @@ public class AutoFishing
     }
     #endregion
 
+    #region 使用消耗类型物品
+    private int UesdItem()
+    {
+
+        // 检查并消耗宝匣药水
+        var CratePotionSlot = data.CratePotionSlot;
+        var CratePotionTime = data.CratePotionTime;
+        ConsumeItem(ItemID.CratePotion, ref CratePotionSlot, ref CratePotionTime, 4, Lang.GetItemName(ItemID.CratePotion));
+        data.CratePotionSlot = CratePotionSlot;
+        data.CratePotionTime = CratePotionTime;
+
+        // 检查并消耗钓鱼药水
+        var FishingPotionSlot = data.FishingPotionSlot;
+        var FishingPotionTime = data.FishingPotionTime;
+        ConsumeItem(ItemID.FishingPotion, ref FishingPotionSlot, ref FishingPotionTime, 8, Lang.GetItemName(ItemID.FishingPotion));
+        data.FishingPotionSlot = FishingPotionSlot;
+        data.FishingPotionTime = FishingPotionTime;
+
+        // 检查并消耗鱼饵桶
+        var ChumBucketSlot = data.ChumBucketSlot;
+        var ChumBucketTime = data.ChumBucketTime;
+        ConsumeItem(ItemID.ChumBucket, ref ChumBucketSlot, ref ChumBucketTime, 10, Lang.GetItemName(ItemID.ChumBucket));
+        data.ChumBucketSlot = ChumBucketSlot;
+        data.ChumBucketTime = ChumBucketTime;
+
+        // 在渔力计算之前，处理自定义消耗物品
+        int UsedBonus = 0;
+        if (Config.RegionBuffEnabled && Config.CustomUsedItem.Count > 0)
+            foreach (var used in Config.CustomUsedItem)
+            {
+                int slot = data.CustomConsumables.TryGetValue(used.ItemType, out var state) ? state.Slot : -1;
+                DateTime expiry = data.CustomConsumables.TryGetValue(used.ItemType, out state) ? state.Expiry : DateTime.MinValue;
+                int bonus = 0;
+                UsedCustomItem(used, ref slot, ref expiry, ref bonus);
+                if (bonus > 0)
+                    UsedBonus += bonus;
+
+                // 更新缓存
+                if (slot != -2)
+                    data.CustomConsumables[used.ItemType] = (slot, expiry, bonus);
+                else if (data.CustomConsumables.ContainsKey(used.ItemType))
+                    data.CustomConsumables.Remove(used.ItemType);
+            }
+
+        return UsedBonus;
+    }
+    #endregion
+
     #region 查找消耗物品（只找一次,找不到就罢工）
-    private void ConsumeItem(int type, ref int slot, ref DateTime Time, int Min, string name)
+    private void ConsumeItem(int type, ref int slot, ref DateTime Time, int Min, LocalizedText name)
     {
         // 效果仍在有效期内，无需消耗新药水,罢工就不找了
         if (DateTime.UtcNow < Time || slot == -2)
@@ -262,13 +292,101 @@ public class AutoFishing
                         slot = i;  // 记录槽位
                     NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, i);
                     Time = DateTime.UtcNow.AddMinutes(Min);
-                    TSPlayer.All.SendMessage(TextGradient($"{data.Owner}的钓鱼机消耗了{name},获得{Min}分钟加成\n"), color2);
+                    foreach (var plr in data.RegionPlayers)
+                        plr.SendMessage(TextGradient($"已经使用{name.ToString()},钓鱼机获得{Min}分钟加成"), color2);
                     return;
                 }
             }
         }
 
         // 没找到就不找了
+        slot = -2;
+    }
+    #endregion
+
+    #region 消耗自定义物品方法(用于区域buff)
+    private void UsedCustomItem(CustomUsedItems UsedItem, ref int slot, ref DateTime expiry, ref int bonus)
+    {
+        // 如果效果仍在有效期内，无需消耗新药水
+        if (DateTime.UtcNow < expiry || slot == 2)
+            return;
+
+        var chest = Main.chest[data.ChestIndex];
+        if (chest == null) return;
+
+        // 尝试使用缓存槽位
+        if (slot >= 0)
+        {
+            var item = chest.item[slot];
+            if (item != null && !item.IsAir && item.type == UsedItem.ItemType)
+            {
+                // 消耗一瓶
+                item.stack--;
+                if (item.stack <= 0)
+                {
+                    item.TurnToAir();
+                    slot = -1;
+                }
+                NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, slot);
+                expiry = DateTime.UtcNow.AddMinutes(UsedItem.Minutes);
+                bonus = UsedItem.Power;
+
+                // 激活区域BUFF
+                if (UsedItem.BuffID > 0)
+                {
+                    data.ActiveZoneBuffs[UsedItem.BuffID] = expiry;
+
+                    // 立即为区域内所有玩家刷新BUFF
+                    if (data.RegionPlayers.Count > 0)
+                        foreach (var plr in data.RegionPlayers)
+                        {
+                            plr.SetBuff(UsedItem.BuffID, 300);
+                            plr.SendMessage($"钓鱼机已使用{ItemIcon(UsedItem.ItemType)}," +
+                                            TextGradient($"区域获得{UsedItem.Minutes}分钟:\n" +
+                                            $"[c/5F9DB8:-] {UsedItem.BuffDesc}"), color);
+                        }
+                }
+
+                return;
+            }
+            // 缓存失效，清除
+            slot = -1;
+        }
+
+        // 重新查找
+        for (int i = 0; i < chest.item.Length; i++)
+        {
+            var item = chest.item[i];
+            if (item != null && !item.IsAir && item.type == UsedItem.ItemType)
+            {
+                item.stack--;
+                if (item.stack <= 0)
+                    item.TurnToAir();
+                else
+                    slot = i;
+                NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, i);
+                expiry = DateTime.UtcNow.AddMinutes(UsedItem.Minutes);
+                bonus = UsedItem.Power;
+
+                if (UsedItem.BuffID > 0)
+                {
+                    data.ActiveZoneBuffs[UsedItem.BuffID] = expiry;
+
+                    // 立即为区域内所有玩家刷新BUFF
+                    if (data.RegionPlayers.Count > 0)
+                        foreach (var plr in data.RegionPlayers)
+                        {
+                            plr.SetBuff(UsedItem.BuffID, 300);
+                            plr.SendMessage($"钓鱼机已使用{ItemIcon(UsedItem.ItemType)}," +
+                                            TextGradient($"区域获得{UsedItem.Minutes}分钟:\n" +
+                                            $"[c/5F9DB8:-] {UsedItem.BuffDesc}"), color);
+                        }
+                }
+                return;
+            }
+        }
+
+        // 没找到，标记为永久缺失
         slot = -2;
     }
     #endregion
@@ -280,15 +398,15 @@ public class AutoFishing
         if (c != -1)
         {
             var chest = Main.chest[c];
-            if (chest != null)
+            if (chest == null) return count;
+
+            for (int s = 0; s < chest.item.Length; s++)
             {
-                for (int s = 0; s < chest.item.Length; s++)
-                {
-                    var item = chest.item[s];
-                    if (item != null && !item.IsAir && item.bait > 0)
-                        count += item.stack;
-                }
+                var item = chest.item[s];
+                if (item != null && !item.IsAir && item.bait > 0)
+                    count += item.stack;
             }
+            return count;
         }
         return count;
     }
@@ -338,14 +456,13 @@ public class AutoFishing
             {
                 if (!Config.EnableCustomNPC) continue;
 
-                bool inLava = data.LavCnt >= data.MaxLiq;
-                bool inHoney = data.HonCnt >= data.MaxLiq;
+                if (data.RegionPlayers.Count == 0) continue;
+
+                bool inLava = data.LavCnt >= data.MaxLiq, inHoney = data.HonCnt >= data.MaxLiq;
                 if (inLava || inHoney) continue;
 
                 Vector2 spawnPos = new Vector2(data.LiquidPos.X * 16 + 8, data.LiquidPos.Y * 16 + 8);
                 if (IsMonsterSolo(spawnPos, rule.NPCType, out bool dup)) continue;
-
-                if (data.PlayerCount == 0) continue;
 
                 int npcIndex = NPC.NewNPC(null, (int)spawnPos.X, (int)spawnPos.Y, rule.NPCType);
                 if (npcIndex >= 0)
@@ -354,8 +471,8 @@ public class AutoFishing
                     npc.active = true;
                     npc.netUpdate = true;
                     NetMessage.SendData((int)PacketTypes.NpcUpdate, -1, -1, null, npcIndex);
-                    if (Config.Broadcast)
-                        TSPlayer.All.SendMessage($"{data.Owner}的钓鱼机 钓到了 {Lang.GetNPCNameValue(rule.NPCType)}", color2);
+                    foreach (var plr in data.RegionPlayers)
+                        plr.SendMessage($"钓鱼机钓到了 {Lang.GetNPCNameValue(rule.NPCType)}", color2);
                 }
                 allow = true;
                 return;
@@ -367,8 +484,8 @@ public class AutoFishing
                 custom.SetDefaults(rule.ItemType);
                 custom.stack = 1;
                 PutToChest(custom);
-                if (Config.Broadcast)
-                    TSPlayer.All.SendMessage($"{data.Owner}的钓鱼机 额外钓到了 {ItemIcon(custom.type, custom.stack)} 坐标:{data.Pos.X} {data.Pos.Y}", color2);
+                foreach (var plr in data.RegionPlayers)
+                    plr.SendMessage($"钓鱼机钓到了 {ItemIcon(custom.type)}", color2);
                 allow = true;
             }
         }
@@ -460,7 +577,7 @@ public class AutoFishing
     }
     #endregion
 
-    #region 物品存入与转移动画(箱满掉地上)
+    #region 物品存入箱子
     private void PutToChest(Item item)
     {
         Vector2 from = new Vector2(data.LiquidPos.X * 16 + 8, data.LiquidPos.Y * 16 + 8);
@@ -480,7 +597,12 @@ public class AutoFishing
                     if (slotItem.type == item.type && slotItem.stack < slotItem.maxStack)
                     {
                         slotItem.stack++;
-                        Transfer(from, pos.X, pos.Y, idx, s, item.type);
+                        if (data.RegionPlayers.Count > 0)
+                        {
+                            SpawnFakeFish(item);
+                            Transfer(from, pos.X, pos.Y, idx, s, item);
+                            ChestGlow(item, pos.X, pos.Y);
+                        }
                         return;
                     }
                 }
@@ -495,7 +617,12 @@ public class AutoFishing
             if (firstEmpty != -1)
             {
                 chest.item[firstEmpty] = item.Clone();
-                Transfer(from, pos.X, pos.Y, idx, firstEmpty, item.type);
+                if (data.RegionPlayers.Count > 0)
+                {
+                    SpawnFakeFish(item);
+                    Transfer(from, pos.X, pos.Y, idx, firstEmpty, item);
+                    ChestGlow(item, pos.X, pos.Y);
+                }
                 return;
             }
 
@@ -503,20 +630,58 @@ public class AutoFishing
             int dropX = data.Pos.X * 16 + 8;
             int dropY = data.Pos.Y * 16 + 8;
             int index = Item.NewItem(null, new Vector2(dropX, dropY), Vector2.Zero, item.type, item.stack);
+            TSPlayer.All.SendData(PacketTypes.UpdateItemDrop, null, index);
+        }
+    }
+    #endregion
+
+    #region 粒子动画方法
+    // 水波与假鱼动画
+    private void SpawnFakeFish(Item fish)
+    {
+        Vector2 from = new Vector2(data.LiquidPos.X * 16 + 8, data.LiquidPos.Y * 16 + 8);
+
+        int FakeFishCount = Main.rand.Next(2, 5);
+        for (int i = 0; i < FakeFishCount; i++)
+        {
+            Vector2 offset = new Vector2(Main.rand.Next(-12, 13), Main.rand.Next(-6, 7)); // 独立偏移
+            // 向位
+            bool isJump = Main.rand.Next(3) == 0; // 1/3 概率跳跃
+            float horiz = Main.rand.Next(-6, 7) * 0.5f; // 垂直
+            float vert = Main.rand.Next(-7, -4); // 水平
+            Vector2 vel = new Vector2(horiz, vert);
+
+            // 水波
+            var GlowSettings = new ParticleOrchestraSettings{ PositionInWorld = from + offset, MovementVector = new Vector2(0f, -1f), UniqueInfoPiece = fish.type};
+            ParticleOrchestrator.BroadcastOrRequestParticleSpawn(ParticleOrchestraType.LakeSparkle, GlowSettings);
+
+            // 假鱼
+            ParticleOrchestraType FishType = isJump ? ParticleOrchestraType.FakeFishJump : ParticleOrchestraType.FakeFish;
+            var fishSttring = new ParticleOrchestraSettings{ PositionInWorld = from + offset,MovementVector = vel,UniqueInfoPiece = fish.type };
+            ParticleOrchestrator.BroadcastOrRequestParticleSpawn(FishType, fishSttring);
         }
     }
 
-    // 转移动画
-    private void Transfer(Vector2 from, int x, int y, int ci, int slot, int itemType)
+    // 物品转移箱子动画
+    private void Transfer(Vector2 from, int x, int y, int index, int slot, Item item)
     {
-        NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, ci, slot);
+        NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, index, slot);
+
         Vector2 to = new(x * 16 + 8, y * 16 + 8);
-        Chest.VisualizeChestTransfer(from, to, itemType, Chest.ItemTransferVisualizationSettings.Hopper);
+        Chest.VisualizeChestTransfer(from, to, item.type, Chest.ItemTransferVisualizationSettings.Hopper);
     }
 
-    /// <summary>
-    /// 整理箱子：合并相同物品，压缩槽位，并按物品ID排序
-    /// </summary>
+    // 箱子闪光动画 （粒子自带音效）
+    private void ChestGlow(Item item, int x, int y)
+    {
+        Vector2 from = new Vector2(data.LiquidPos.X * 16 + 8, data.LiquidPos.Y * 16 + 8);
+        Vector2 to = new(x * 16 + 8, y * 16 + 8);
+        var setting = new ParticleOrchestraSettings { PositionInWorld = to, MovementVector = Vector2.Zero, UniqueInfoPiece = item.type };
+        ParticleOrchestrator.BroadcastOrRequestParticleSpawn(ParticleOrchestraType.RainbowBoulder4, setting);
+    }
+    #endregion
+
+    #region 整理箱子
     public void SortChest(Chest chest)
     {
         if (chest == null) return;
@@ -558,7 +723,7 @@ public class AutoFishing
 
         for (int i = chest.item.Length - 1; i > chest.item.Length; i--)
             NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, i);
-    }
+    } 
     #endregion
 
     #region 禁钓怪物模式

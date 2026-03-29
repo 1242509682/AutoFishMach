@@ -56,7 +56,11 @@ internal class Configuration
     public int SoloMode { get; set; } = 0;
     [JsonProperty("永久渔力加成物品", Order = 23)]
     public Dictionary<int, int> CustomPowerItems { get; set; } = new();
-    [JsonProperty("自定义渔获表", Order = 24)]
+    [JsonProperty("区域BUFF", Order = 24)]
+    public bool RegionBuffEnabled { get; set; } = true;
+    [JsonProperty("区域Buff消耗物品", Order = 25)]
+    public List<CustomUsedItems> CustomUsedItem { get; set; } = new();
+    [JsonProperty("自定义渔获表", Order = 26)]
     public List<CustomFishRule> CustomFishes { get; set; } = new();
 
     [JsonIgnore]
@@ -104,14 +108,19 @@ internal class Configuration
             { ItemID.CratePotion, 15 }  // 宝匣药水 +5
         };
 
+        CustomUsedItem = new List<CustomUsedItems>
+        {
+            new CustomUsedItems{ ItemType = ItemID.FeatherfallPotion, Minutes = 5, Power = 5, BuffID = BuffID.Featherfall, }
+        };
+
         CustomFishes = new()
         {
             // 克眼后 1/30 概率钓到生命水晶
             new CustomFishRule()
-            { 
-                ItemType = ItemID.LifeCrystal, 
-                Chance = 30, 
-                Cond = new List<string>() { "克眼" } 
+            {
+                ItemType = ItemID.LifeCrystal,
+                Chance = 30,
+                Cond = new List<string>() { "克眼" }
             },
 
             // 血月肉前敌怪（基础概率 1/30）
@@ -209,6 +218,25 @@ internal class Configuration
             string condStr = rule.Cond.Count > 0 ? string.Join("、", rule.Cond) + "条件下" : "无条件";
             rule.Desc = $"{condStr} 有 {chanceStr} 概率钓出 {target}";
         }
-    } 
+    }
+    #endregion
+
+    #region 自动填充显示名称
+    public void AutoFillNames()
+    {
+        if (CustomUsedItem == null || !CustomUsedItem.Any()) return;
+
+        foreach (var item in CustomUsedItem)
+        {
+            if (item.ItemType != -1)
+                item.ItemName = Lang.GetItemNameValue(item.ItemType);
+
+            if (item.BuffID != -1)
+            {
+                item.BuffName = Lang.GetBuffName(item.BuffID);
+                item.BuffDesc = Lang.GetBuffDescription(item.BuffID);
+            }
+        }
+    }
     #endregion
 }

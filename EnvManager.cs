@@ -130,7 +130,7 @@ public static class EnvManager
     }
     #endregion
 
-    #region 统计半径内的水体，并返回最大连通水体的最近点（用于生成物品与NPC等）
+    #region 统计半径内液体获取液体最多的最近坐标点（用于生成物品与NPC）
     public static Point NewGetLiquid(MachData data, out int water, out int lava, out int honey)
     {
         // 获取区域边界（若区域不存在则回退到旧方法）
@@ -144,67 +144,54 @@ public static class EnvManager
         water = 0;
         lava = 0;
         honey = 0;
-        Point bestWater = Point.Zero;
-        Point bestLava = Point.Zero;
-        Point bestHoney = Point.Zero;
-        int distWaterSq = int.MaxValue;
-        int distLavaSq = int.MaxValue;
-        int distHoneySq = int.MaxValue;
+
+        Point WaterPos = Point.Zero, LavaPos = Point.Zero, HoneyPos = Point.Zero;
+        int WaterSq = int.MaxValue, LavaSq = int.MaxValue, HoneySq = int.MaxValue;
 
         for (int x = minX; x <= maxX; x++)
-        {
             for (int y = minY; y <= maxY; y++)
             {
                 var tile = Main.tile[x, y];
+
                 if (tile?.liquid > 0)
-                {
                     if (tile.liquidType() == LiquidID.Water)
                     {
                         water++;
                         int distSq = (x - data.Pos.X) * (x - data.Pos.X) + (y - data.Pos.Y) * (y - data.Pos.Y);
-                        if (distSq < distWaterSq)
-                        {
-                            distWaterSq = distSq;
-                            bestWater = new Point(x, y + 1);
-                        }
+                        if (distSq >= WaterSq) continue;
+                        WaterSq = distSq;
+                        WaterPos = new Point(x, y + 1);
                     }
                     else if (tile.liquidType() == LiquidID.Lava)
                     {
                         lava++;
                         int distSq = (x - data.Pos.X) * (x - data.Pos.X) + (y - data.Pos.Y) * (y - data.Pos.Y);
-                        if (distSq < distLavaSq)
-                        {
-                            distLavaSq = distSq;
-                            bestLava = new Point(x, y + 1);
-                        }
+                        if (distSq >= LavaSq) continue;
+                        LavaSq = distSq;
+                        LavaPos = new Point(x, y + 1);
                     }
                     else if (tile.liquidType() == LiquidID.Honey)
                     {
                         honey++;
                         int distSq = (x - data.Pos.X) * (x - data.Pos.X) + (y - data.Pos.Y) * (y - data.Pos.Y);
-                        if (distSq < distHoneySq)
-                        {
-                            distHoneySq = distSq;
-                            bestHoney = new Point(x, y + 1);
-                        }
+                        if (distSq >= HoneySq) continue;
+                        HoneySq = distSq;
+                        HoneyPos = new Point(x, y + 1);
                     }
-                }
             }
-        }
 
         // 按数量最多的液体返回坐标
         int max = Math.Max(water, Math.Max(lava, honey));
-        if (max == lava) return bestLava;
-        if (max == honey) return bestHoney;
-        if (max == water) return bestWater;
+        if (max == lava) return LavaPos;
+        if (max == honey) return HoneyPos;
+        if (max == water) return WaterPos;
         return Point.Zero;
     }
     #endregion
 
     #region 快速检查区域内是否有任意液体达到指定阈值，并返回达标液体的数量（创建钓鱼机时使用）
-    public static int QuickLiquidCheck(Point center, ref string name)
+    public static int QuickLiquidCheck(Point center)
     {
-        name = "无";
         int radius = Config.Range;
         int total = Config.NeedLiqStack;
         int minX = Math.Max(center.X - radius, 0);
@@ -215,42 +202,30 @@ public static class EnvManager
         int water = 0, lava = 0, honey = 0;
 
         for (int x = minX; x <= maxX; x++)
-        {
             for (int y = minY; y <= maxY; y++)
             {
                 var tile = Main.tile[x, y];
+
                 if (tile?.liquid > 0)
-                {
                     if (tile.liquidType() == LiquidID.Water)
                     {
                         water++;
-                        if (water >= total)
-                        {
-                            name = "水";
-                            return water;
-                        }
+                        if (water < total) continue;
+                        return water;
                     }
                     else if (tile.liquidType() == LiquidID.Lava)
                     {
                         lava++;
-                        if (lava >= total)
-                        {
-                            name = "岩浆";
-                            return lava;
-                        }
+                        if (lava < total) continue;
+                        return lava;
                     }
                     else if (tile.liquidType() == LiquidID.Honey)
                     {
                         honey++;
-                        if (honey >= total)
-                        {
-                            name = "蜂蜜";
-                            return honey;
-                        }
+                        if (honey < total) continue;
+                        return honey;
                     }
-                }
             }
-        }
 
         // 没有达标，返回0
         return 0;

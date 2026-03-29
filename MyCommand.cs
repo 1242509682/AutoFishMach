@@ -34,13 +34,13 @@ internal class MyCommand
                     if (plr.ActiveChest == -1)
                     {
                         plr.SetData("set", true);
-                        plr.SendMessage(TextGradient("请打开一个箱子作为自动钓鱼机..."), color);
+                        plr.SendMessage(TextGradient("请打开一个箱子作为自动钓鱼机...\n"), color);
                         return;
                     }
 
                     var chest = Main.chest[plr.ActiveChest];
                     if (chest == null) return;
-                    var pos = new Point(chest.x,chest.y);
+                    var pos = new Point(chest.x, chest.y);
                     var data = DataManager.FindChest(plr.ActiveChest);
                     if (data == null)
                     {
@@ -95,7 +95,7 @@ internal class MyCommand
                     if (plr.ActiveChest == -1)
                     {
                         plr.SetData("info", true);
-                        plr.SendMessage(TextGradient("请打开要查看的钓鱼箱..."), color);
+                        plr.SendMessage(TextGradient("请打开要查看的钓鱼箱...\n"), color);
                         return;
                     }
 
@@ -235,52 +235,72 @@ internal class MyCommand
         // 鱼饵桶临时加成 +10
         if (DateTime.UtcNow < data.ChumBucketTime) power += Config.ChumBucketPower;
 
+        // 自定义物品临时加成（渔力）
+        int customBonus = 0;
+        if (Config.CustomUsedItem.Count > 0)
+            foreach (var consumable in Config.CustomUsedItem)
+                if (data.CustomConsumables.TryGetValue(consumable.ItemType, out var state) && state.Expiry > DateTime.UtcNow)
+                    customBonus += state.Bonus;
+
+        power += customBonus;
+
         // 含水鱼力
         int finalPower = (int)(power * waterQuality);
 
         // 输出环境信息
-        plr.SendMessage($"《{data.Owner}的钓鱼机》", color2);
+        plr.SendMessage(TextGradient($"\n《[c/E8EB6E:{data.Owner}]的钓鱼机》 当前 [c/FF716D:{data.RegionPlayers.Count}] 人"), color);
         var mess = new StringBuilder();
         // 其他环境参数
-        mess.AppendLine($"当前人数:{data.PlayerCount}");
-        mess.AppendLine($"正钓液体:{data.LiqName}");
-        mess.AppendLine($"液体数量:{data.MaxLiq}");
-        mess.AppendLine($"需要电路:{(Config.NeedWiring ? "是" : "否")}");
-        mess.AppendLine($"钓任务鱼:{(Config.QuestFish ? "是" : "否")}");
-        mess.AppendLine($"液体统计: 水{data.WatCnt} 岩浆{data.LavCnt} 蜂蜜{data.HonCnt}");
-        mess.AppendLine($"液体需求:{waterNeeded}");
-        mess.AppendLine($"液体质量:{waterQuality:P0}");
-        mess.AppendLine($"基础渔力:{power}");
-        mess.AppendLine($"含水渔力:{finalPower}");
-        mess.AppendLine($"节省鱼饵:{(data.HasTackle ? "是" : "否")}");
+        mess.AppendLine($"在钓液体:{data.LiqName} [c/61BFE2:{data.MaxLiq}]格");
+        mess.AppendLine($"附近 水 [c/61BFE2:{data.WatCnt}]格 岩浆 [c/FF716D:{data.LavCnt}]格 蜂蜜 [c/FFE46D:{data.HonCnt}]格");
+        mess.AppendLine($"液体需求:[c/FF716D:{waterNeeded}] 液体质量:[c/FFA866:{waterQuality:P0}]");
+        mess.AppendLine($"渔力:[c/61E26C:{power}]点 含水:[c/FFAA6D:{finalPower}]");
+        mess.AppendLine($"熔岩钓鱼:{(data.CanFishInLava ? "是" : "否")} 节省鱼饵:{(data.HasTackle ? "是" : "否")}");
+        mess.AppendLine($"需要电路:{(Config.NeedWiring ? "是" : "否")} 钓任务鱼:{(Config.QuestFish ? "是" : "否")}");
+        mess.AppendLine($"区域保护:{(Config.DisabledBuild ? "是 " : "否 ")} 范围:[c/61BCE3:{Config.Range}]格");
+        mess.AppendLine($"无人关闭:{(Config.AutoStopWhenEmpty ? "是" : "否")} 自动整理:{(Config.AutoPut ? "是" : "否")}");
+        mess.AppendLine($"允许怪物:{(Config.EnableCustomNPC ? "是" : "否")}");
+        mess.AppendLine($"禁钓多怪:{(Config.SoloCustomMonster ? "是" : "否")} 模式:{(Config.SoloMode == 0 ? "不同类各[c/61BBE2:1]个" : "只钓[c/FFAC6D:1]个")}");
 
         // 宝匣药水
         if (data.CratePotionTime > DateTime.UtcNow)
-            mess.AppendLine($"宝匣药水:剩余{(data.CratePotionTime - DateTime.UtcNow).TotalMinutes:F1}分钟");
-        else
-            mess.AppendLine($"宝匣药水:无");
+        {
+            double min = (data.CratePotionTime - DateTime.UtcNow).TotalMinutes;
+            mess.AppendLine($"宝匣药水:剩余[c/61E278:{FormatRemaining(min)}]");
+        }
 
         // 钓鱼药水
         if (data.FishingPotionTime > DateTime.UtcNow)
-            mess.AppendLine($"钓鱼药水:剩余{(data.FishingPotionTime - DateTime.UtcNow).TotalMinutes:F1}分钟");
-        else
-            mess.AppendLine($"钓鱼药水:无");
+        {
+            double min = (data.FishingPotionTime - DateTime.UtcNow).TotalMinutes;
+            mess.AppendLine($"钓鱼药水:剩余[c/61BBE2:{FormatRemaining(min)}]");
+        }
 
         // 鱼饵桶
         if (data.ChumBucketTime > DateTime.UtcNow)
-            mess.AppendLine($"鱼饵桶:剩余{(data.ChumBucketTime - DateTime.UtcNow).TotalMinutes:F1}分钟");
-        else
-            mess.AppendLine($"鱼饵桶:无");
+        {
+            double min = (data.ChumBucketTime - DateTime.UtcNow).TotalMinutes;
+            mess.AppendLine($"鱼饵桶:剩余[c/FF766D:{FormatRemaining(min)}]");
+        }
 
-        mess.AppendLine($"熔岩钓鱼:{(data.CanFishInLava ? "是" : "否")}");
-        mess.AppendLine($"颠倒海洋:{(data.RolledRemixOcean ? "是" : "否")}");
-        mess.AppendLine($"自动整理:{(Config.AutoPut ? "是" : "否")}");
-        mess.AppendLine($"区域保护:{(Config.DisabledBuild ? "是" : "否")}");
-        mess.AppendLine($"区域范围:{Config.Range}格");
-        mess.AppendLine($"无人关闭:{(Config.AutoStopWhenEmpty ? "是" : "否")}");
-        mess.AppendLine($"允许怪物:{(Config.EnableCustomNPC ? "是" : "否")}");
-        mess.AppendLine($"禁钓多怪:{(Config.SoloCustomMonster ? "是" : "否")}");
-        mess.AppendLine($"钓怪模式:{(Config.SoloMode == 0 ? "不同类各1个" : "只钓1个")}");
+        // 自定义消耗物品
+        if (Config.CustomUsedItem.Count > 0)
+        {
+            int idx = 1;  // 序号从1开始
+            mess.AppendLine($"区域buff:");
+            foreach (var UsedItem in Config.CustomUsedItem)
+                if (data.CustomConsumables.TryGetValue(UsedItem.ItemType, out var state) && state.Expiry > DateTime.UtcNow)
+                {
+                    double min = (state.Expiry - DateTime.UtcNow).TotalMinutes;
+                    if (UsedItem.BuffID > 0)
+                    {
+                        string buffName = $"{UsedItem.BuffName} ";
+                        string buffDesc = $"[c/5F9DB8:-] {UsedItem.BuffDesc}";
+                        mess.AppendLine($"{idx}.{buffName} 剩余[c/61BBE2:{FormatRemaining(min)}] \n{buffDesc}");
+                        idx++;
+                    }
+                }
+        }
 
         var env = new List<string>();
         var env2 = MyCommand.GetHeightName(data.HeightLevel);
@@ -293,12 +313,12 @@ internal class MyCommand
         if (data.ZoneBeach) env.Add("海洋");
         if (data.ZoneDungeon) env.Add("地牢");
         if (data.RolledRemixOcean) env.Add("颠倒海洋");
-        mess.AppendLine($"钓鱼环境:{env2},{string.Join(",", env)}");
+        mess.AppendLine($"[c/63D475:钓鱼环境]:{env2},{string.Join(",", env)}");
         plr.SendMessage(TextGradient(mess.ToString()), color2);
 
         // 显示排除物品列表
-        string NoItem = data.Exclude.Count > 0 ? string.Join(", ", data.Exclude.Select(id => $"{ItemIcon(id, 1)}")) : "无";
-        plr.SendMessage($"排除物品: {NoItem}", color2);
+        string NoItem = data.Exclude.Count > 0 ? string.Join(", ", data.Exclude.Select(id => $"{ItemIcon(id)}")) : "无";
+        plr.SendMessage($"排除物品: {NoItem}", color);
     }
     #endregion
 
