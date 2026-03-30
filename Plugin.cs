@@ -1,11 +1,13 @@
-﻿using System.Linq;
-using System.Text;
+﻿using System;
+using System.Diagnostics;
 using Microsoft.Xna.Framework;
 using Terraria;
 using Terraria.GameContent.FishDropRules;
 using TerrariaApi.Server;
 using TShockAPI;
+using TShockAPI.DB;
 using TShockAPI.Hooks;
+using static FishMach.DataManager;
 using static FishMach.Utils;
 using static TShockAPI.GetDataHandlers;
 
@@ -18,7 +20,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     public static string PluginName => "自动钓鱼机";
     public override string Name => PluginName;
     public override string Author => "羽学";
-    public override Version Version => new(1, 0, 8);
+    public override Version Version => new(1, 0, 9);
     public override string Description => "使用/afm 指令指定一个箱子作为自动钓鱼机";
     #endregion
 
@@ -39,6 +41,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     internal static FishDropRuleList RuleList = new();
     // 复用玩家对象（避免频繁创建）
     internal static Player TempPlayer = new();
+    // 优化：使用队列来管理待执行的机器，减少遍历次数
+    private static readonly Queue<MachData> Queue = new Queue<MachData>();
     #endregion
 
     #region 注册与释放
@@ -46,6 +50,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     {
         GeneralHooks.ReloadEvent += ReloadConfig;
         On.Terraria.WorldGen.KillTile += OnKillTile;
+        On.Terraria.Wiring.Hopper += OnHopper;
         ServerApi.Hooks.GamePostInitialize.Register(this, GamePost);
         ServerApi.Hooks.ServerLeave.Register(this, OnServerLeave);
         ServerApi.Hooks.WorldSave.Register(this, OnWorldSave);
@@ -53,8 +58,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         GetDataHandlers.ChestItemChange += OnChestItemChange!;
         GetDataHandlers.ChestOpen += OnChestOpen!;
         GetDataHandlers.PlayerZone += OnPlayerZone;
-        GetDataHandlers.PlayerBuffUpdate += OnPlayerBuffUpdate;
-        On.Terraria.Wiring.Hopper += OnHopper;
+        GetDataHandlers.PlayerBuffUpdate += OnPlayerBuffUpdate!;
         RegionHooks.RegionEntered += OnRegionEnter;
         RegionHooks.RegionLeft += OnRegionLeave;
         Commands.ChatCommands.Add(new Command(perm, MyCommand.CmdAfm, afm));
@@ -66,6 +70,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         {
             GeneralHooks.ReloadEvent -= ReloadConfig;
             On.Terraria.WorldGen.KillTile -= OnKillTile;
+            On.Terraria.Wiring.Hopper -= OnHopper;
             ServerApi.Hooks.GamePostInitialize.Deregister(this, GamePost);
             ServerApi.Hooks.ServerLeave.Deregister(this, OnServerLeave);
             ServerApi.Hooks.WorldSave.Deregister(this, OnWorldSave);
@@ -73,8 +78,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             GetDataHandlers.ChestItemChange -= OnChestItemChange!;
             GetDataHandlers.ChestOpen -= OnChestOpen!;
             GetDataHandlers.PlayerZone -= OnPlayerZone;
-            GetDataHandlers.PlayerBuffUpdate -= OnPlayerBuffUpdate;
-            On.Terraria.Wiring.Hopper -= OnHopper;
+            GetDataHandlers.PlayerBuffUpdate -= OnPlayerBuffUpdate!;
             RegionHooks.RegionEntered -= OnRegionEnter;
             RegionHooks.RegionLeft -= OnRegionLeave;
             Commands.ChatCommands.RemoveAll(x => x.CommandDelegate == MyCommand.CmdAfm);
@@ -87,8 +91,10 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     internal static Configuration Config = new(); // 配置文件实例
     private static void ReloadConfig(ReloadEventArgs args)
     {
-        // 先保存钓鱼机数据（如果有脏数据）
-        DataManager.CanSave = true;
+        // 先保存钓鱼机数据
+        foreach (var data in DataManager.Machines)
+            DataManager.Save(data);
+
         LoadConfig();
         args.Player.SendMessage($"[{PluginName}]重新加载配置完毕。", color);
     }
@@ -106,16 +112,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             Config.AutoFillNames(); // 自动写物品名
             Config.Write(); // 写回（确保配置存在）
 
-            RuleList = new FishDropRuleList();
-            var populator = new GameContentFishDropPopulator(RuleList);
-            populator.Populate();
-
-            // 移除无效的区域或没缓存的钓鱼机
-            RemoveRegion();
             // 更新区域范围与建筑保护属性
             UpdateRegions();
-
-            SaveFrame = Timer + (Config.SaveInterval * 60);
         }
         catch (Exception ex)
         {
@@ -125,11 +123,26 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     #endregion
 
     #region 加载与保存世界事件
-    private void OnWorldSave(WorldSaveEventArgs args) => DataManager.CanSave = true;
+    private void OnWorldSave(WorldSaveEventArgs args)
+    {
+        for (int i = 0; i < Machines.Count; i++)
+        {
+            DataManager.Save(DataManager.Machines[i]);
+        }
+    }
+
     private void GamePost(EventArgs args) // 加载完世界后事件
     {
+        // 初始化掉落规则列表
+        RuleList = new FishDropRuleList();
+        new GameContentFishDropPopulator(RuleList).Populate();
+
+        // 初始化大气因子
+        EnvManager.InitAtmo();
+
         // 加载钓鱼机缓存
-        DataManager.Load();
+        DataManager.LoadAll();
+
         // 加载配置文件
         LoadConfig();
 
@@ -143,38 +156,32 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             if (data.nextFrame == 0)
                 data.nextFrame = Timer + delay;
         }
+
     }
     #endregion
 
     #region 游戏更新事件（触发器）
     private static long Timer = 0; // 帧计数器（每次游戏更新+1）
-    private static long SaveFrame = 0; // 保存缓存的帧数
     private void OnGameUpdate(EventArgs args)
     {
         if (!Config.Enabled) return;
 
         Timer++;
 
-        // 定期保存（内存数据）
-        if (Timer >= SaveFrame)
-        {
-            if (DataManager.CanSave)
-                DataManager.Save();
-
-            SaveFrame = Timer + (Config.SaveInterval * 60);
-        }
-
         // 无电路模式：使用游戏更新事件自动定时执行
         if (!Config.NeedWiring)
         {
+            // 优化：使用索引访问而不是foreach，减少迭代开销
             var all = DataManager.Machines;
-            foreach (var data in all)
+            for (int i = 0; i < all.Count; i++)
             {
+                MachData? data = all[i];
+
                 // 检查是否到达执行时间
                 if (Timer >= data.nextFrame)
                 {
-                    var engine = new AutoFishing(data);
-                    engine.Execute();
+                    // 将机器加入执行队列
+                    Queue.Enqueue(data);
 
                     // 计算下次执行时间（支持随机范围）
                     int min = Config.MinFrames;
@@ -182,6 +189,14 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                     int delay = min == max ? min : Main.rand.Next(min, max + 1);
                     data.nextFrame = Timer + delay;
                 }
+            }
+
+            // 执行队列中的机器
+            while (Queue.Count > 0)
+            {
+                var data = Queue.Dequeue();
+                var engine = new AutoFishing(data);
+                engine.Execute();
             }
         }
     }
@@ -206,7 +221,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         // 执行钓鱼
         var engine = new AutoFishing(data);
 
-        // 电路限频
+        // 如果没开启电路限频,则根据游戏内的计时器频率触发
         if (!Config.LimitFrames)
         {
             engine.Execute();
@@ -235,11 +250,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             var pos = new Point(x, y);
             var data = DataManager.FindTile(pos);
             if (data != null)
-            {
-                if (!string.IsNullOrEmpty(data.RegName))
-                    TShock.Regions.DeleteRegion(data.RegName);
                 DataManager.Remove(pos);
-            }
         }
 
         orig(x, y, fail, effectOnly, noItem);
@@ -279,15 +290,106 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             return;
         }
 
+        // 处理 sync 指令同步模式
+        if (plr.GetData<bool>("sync"))
+        {
+            plr.RemoveData("sync");
+            if (data == null)
+            {
+                // 没有钓鱼机数据，检查当前玩家所在区域是否为钓鱼机区域且数据丢失
+                var region = plr.CurrentRegion;
+                if (region != null && IsAfmRegion(region.Name) && FindRegion(region.Name) == null)
+                {
+                    TShock.Regions.DeleteRegion(region.Name);
+                    plr.SendMessage(TextGradient($"数据丢失,已删除无效区域 {plr.CurrentRegion.Name}"), color);
+                    return;
+                }
+
+                plr.SendErrorMessage("该位置没有钓鱼机");
+                return;
+            }
+
+            // 检查箱子是否仍然存在且位置正确
+            var chest2 = Main.chest[data.ChestIndex];
+            if (chest2 == null || chest2.x != data.Pos.X || chest2.y != data.Pos.Y)
+            {
+                // 箱子已被移除或移动，区域无效，删除区域和机器
+                TShock.Regions.DeleteRegion(plr.CurrentRegion.Name);
+                DataManager.Remove(data.Pos);
+                TShock.Utils.Broadcast($"钓鱼机 [c/ED756F:{data.ChestIndex}] 已不存在\n" +
+                                       $"删除无效区域: {plr.CurrentRegion.Name}", color);
+                return;
+            }
+
+            // 检查区域是否存在，若不存在则重建
+            var region2 = TShock.Regions.GetRegionByName(data.RegName);
+            if (region2 == null)
+            {
+                int left, top, w, h;
+                string RegionName = data.RegName;
+                string owner = data.Owner;
+                string worldId = Main.worldID.ToString();
+
+                // 重叠检查
+                if (IsOverlap(pos, worldId, "重建", out left, out top, out w, out h))
+                    return;
+
+                // 创建区域
+                if (TShock.Regions.AddRegion(left, top, w, h, RegionName, owner, worldId, 0))
+                {
+                    TShock.Regions.SetRegionState(RegionName, Config.RegionBuild);
+                    TShock.Utils.Broadcast(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 区域已重建"), color);
+                }
+            }
+
+            // 有数据，执行距离检查
+            int dx = plr.TileX - data.Pos.X;
+            int dy = plr.TileY - data.Pos.Y;
+            int dist = (int)MathF.Sqrt(dx * dx + dy * dy);
+            if (dist > Config.UpdateTileRange)
+            {
+                plr.SendErrorMessage($"距离钓鱼机过远（需在{Config.UpdateTileRange}格内），请靠近后再同步");
+                return;
+            }
+
+            UpdateData(data, plr.TPlayer);
+            EnvManager.UpdateItemCache(data);
+            plr.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 数据已同步"), color);
+            return;
+        }
+
         if (data != null)
         {
             // 如果箱子没有连接电线，则提示
             if (Config.NeedWiring && !HasWiring(data.Pos))
             {
-                plr.SendMessage(TextGradient($"{data.Owner}的自动钓鱼机[c/FF716D:未连接]电线," +
+                plr.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] [c/75D1FF:未连接]电线," +
                                              "\n连接电路与计时器后将自动启动"), color2);
                 return;
             }
+
+            // 检查区域是否存在，若不存在则重建
+            var region = TShock.Regions.GetRegionByName(data.RegName);
+            if (region == null)
+            {
+                int left, top, w, h;
+                string RegionName = data.RegName;
+                string owner = data.Owner;
+                string worldId = Main.worldID.ToString();
+
+                // 重叠检查
+                if (IsOverlap(pos, worldId, "重建", out left, out top, out w, out h))
+                    return;
+
+                // 创建区域
+                if (TShock.Regions.AddRegion(left, top, w, h, RegionName, owner, worldId, 0))
+                {
+                    TShock.Regions.SetRegionState(RegionName, Config.RegionBuild);
+                    TShock.Utils.Broadcast(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 区域已重建"), color);
+                }
+            }
+
+            DataManager.Save(data);
         }
     }
     #endregion
@@ -304,14 +406,6 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         var data = DataManager.FindChest(e.ID);
         if (data == null) return;
 
-        // 如果箱子没有连接电线，则提示
-        if (Config.NeedWiring && !HasWiring(data.Pos))
-        {
-            e.Player.SendMessage(TextGradient($"{data.Owner}的自动钓鱼机[c/FF716D:未连接]电线," +
-                                              "\n连接电路与计时器后将自动启动"), color2);
-            return;
-        }
-
         // 批量排除模式：记录物品
         if (pend.TryGetValue(plr.Name, out var set))
         {
@@ -322,8 +416,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         }
 
         // 更新物品缓存
-        EnvManager.UpdateMachineCache(data);
-        DataManager.CanSave = true;
+        EnvManager.UpdateItemCache(data);
+        DataManager.Save(data);
     }
     #endregion
 
@@ -333,11 +427,30 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         if (!Config.Enabled) return;
 
         if (!IsAfmRegion(args.Region.Name)) return;
+
         var data = DataManager.FindRegion(args.Region.Name);
         if (data == null)
         {
-            // 移除无效的区域或没缓存的钓鱼机
-            RemoveRegion();
+            // 没有钓鱼机数据，检查当前玩家所在区域是否为钓鱼机区域且数据丢失
+            var region = args.Region;
+            if (region != null)
+            {
+                TShock.Regions.DeleteRegion(region.Name);
+                args.Player.SendMessage(TextGradient($"数据丢失,已删除无效区域 {region.Name}"), color);
+            }
+
+            return;
+        }
+
+        // 检查箱子是否仍然存在且位置正确
+        var chest = Main.chest[data.ChestIndex];
+        if (chest == null || chest.x != data.Pos.X || chest.y != data.Pos.Y)
+        {
+            // 箱子已被移除或移动，区域无效，删除区域和机器
+            TShock.Regions.DeleteRegion(args.Region.Name);
+            DataManager.Remove(data.Pos);
+            TShock.Utils.Broadcast($"钓鱼机 [c/ED756F:{data.ChestIndex}] 已不存在\n" +
+                                   $"删除无效区域: {args.Region.Name}", color);
             return;
         }
 
@@ -348,77 +461,28 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         // 立即刷新一次BUFF
         RefreshBuffs(args.Player, data);
 
+        // 区域信息
+        if (Config.RegionBroadcast)
+            MyCommand.RegionInfo(args, data);
+
         // 玩家进入时整理一次箱子
         if (Config.AutoPut)
         {
-            var chest = Main.chest[data.ChestIndex];
-            if (chest != null)
-            {
-                var af = new AutoFishing(data);
-                af.SortChest(chest);
-            }
+            var Using = false;
+            foreach (var plr in data.RegionPlayers)
+                if (plr.ActiveChest == data.ChestIndex)
+                    Using = true;
+
+            var mess = string.Empty;
+
+            new AutoFishing(data).SortChest(chest, Using, ref mess);
+
+            if (!string.IsNullOrEmpty(mess) && Config.RegionBroadcast && data.RegionPlayers.Count > 0)
+                foreach (var plr in data.RegionPlayers)
+                    plr.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 触发自动整理:\n") + mess, color);
         }
 
-        if (Config.RegionBroadcast)
-        {
-            var env = new List<string>();
-            var env2 = MyCommand.GetHeightName(data.HeightLevel);
-            if (data.ZoneHallow) env.Add("神圣");
-            if (data.ZoneCorrupt) env.Add("腐化");
-            if (data.ZoneCrimson) env.Add("猩红");
-            if (data.ZoneJungle) env.Add("丛林");
-            if (data.ZoneSnow) env.Add("雪原");
-            if (data.ZoneDesert) env.Add("沙漠");
-            if (data.ZoneBeach) env.Add("海洋");
-            if (data.ZoneDungeon) env.Add("地牢");
-            if (data.RolledRemixOcean) env.Add("颠倒海洋");
-
-            // 计算当前渔力
-            int rodPower = AutoFishing.GetRodPower(data);
-            int baitPower = AutoFishing.GetBaitPower(data);
-            int extraPower = data.ExtraPower;
-            int tempPower = 0;
-            if (DateTime.UtcNow < data.FishingPotionTime) tempPower += Config.FishingPotionPower;
-            if (DateTime.UtcNow < data.ChumBucketTime) tempPower += Config.ChumBucketPower;
-            if (Config.CustomUsedItem.Count > 0)
-                foreach (var UsedItem in Config.CustomUsedItem)
-                    if (data.CustomConsumables.TryGetValue(UsedItem.ItemType, out var state) && state.Expiry > DateTime.UtcNow)
-                        tempPower += state.Bonus;
-            int Power = rodPower + baitPower + extraPower + tempPower;
-
-            var PowerText = string.Empty;
-            if (Power > 0)
-                PowerText = TextGradient($"渔力:{Power}");
-
-            args.Player.SendMessage(TextGradient($"欢迎来到[c/E8EB6E:{data.Owner}]的自动钓鱼机 当前 [c/FF716D:{data.RegionPlayers.Count}] 人"), color);
-            args.Player.SendMessage(TextGradient($"环境:{env2},{string.Join(",", env)}"), color);
-            args.Player.SendMessage(TextGradient($"在钓 {data.LiqName} [c/61BFE2:{data.MaxLiq}] 格 {PowerText}"), color);
-
-            if (data.Exclude.Count > 0)
-                args.Player.SendMessage($"排除物品: {string.Join(", ", data.Exclude.Select(id => $"{ItemIcon(id)}"))}", color2);
-
-            var mess = new StringBuilder();
-            if (Config.CustomUsedItem.Count > 0)
-            {
-                int idx = 1;
-                mess.AppendLine($"区域buff:");
-                foreach (var UsedItem in Config.CustomUsedItem)
-                    if (data.CustomConsumables.TryGetValue(UsedItem.ItemType, out var state) && state.Expiry > DateTime.UtcNow)
-                    {
-                        double min = (state.Expiry - DateTime.UtcNow).TotalMinutes;
-                        if (UsedItem.BuffID > 0)
-                        {
-                            string buffName = $"{UsedItem.BuffName}";
-                            string buffDesc = $"[c/5F9DB8:-] {UsedItem.BuffDesc}";
-                            mess.AppendLine($"{idx}.{buffName} 剩余[c/61BBE2:{FormatRemaining(min)}] \n{buffDesc}");
-                            idx++;
-                        }
-                    }
-            }
-            args.Player.SendMessage(TextGradient(mess.ToString()), color);
-        }
-
-        DataManager.CanSave = true;
+        DataManager.Save(data);
     }
 
     private void OnRegionLeave(RegionHooks.RegionLeftEventArgs args)
@@ -430,12 +494,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         if (plr == null || !plr.Active) return;
 
         var data = DataManager.FindRegion(args.Region.Name);
-        if (data == null)
-        {
-            // 移除无效的区域或没缓存的钓鱼机
-            RemoveRegion();
-            return;
-        }
+        if (data == null) return;
 
         if (pend.ContainsKey(plr.Name))
             pend.Remove(plr.Name);
@@ -443,25 +502,14 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         if (data.RegionPlayers.Contains(plr))
             data.RegionPlayers.Remove(plr);
 
-        // 玩家离开时整理一次箱子
-        if (Config.AutoPut)
-        {
-            var chest = Main.chest[data.ChestIndex];
-            if (chest != null)
-            {
-                var af = new AutoFishing(data);
-                af.SortChest(chest);
-            }
-        }
-
         if (Config.RegionBroadcast)
-            plr.SendMessage(TextGradient($"你离开了{data.Owner}的自动钓鱼机区域\n"), color);
+            plr.SendMessage(TextGradient($"\n你离开了钓鱼机 [c/ED756F:{data.ChestIndex}] 区域\n"), color);
 
         // 无人自动关闭检查
         if (Config.AutoStopWhenEmpty && data.RegionPlayers.Count == 0)
-            plr.SendMessage(TextGradient($"【{data.Owner}自钓机】检测到附近没有玩家自动关闭"), color);
+            plr.SendMessage(TextGradient($"检测到附近没有玩家自动关闭"), color);
 
-        DataManager.CanSave = true;
+        DataManager.Save(data);
     }
 
     private void OnServerLeave(LeaveEventArgs args)
@@ -475,6 +523,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             plr.RemoveData("set");
         if (plr.GetData<bool>("info"))
             plr.RemoveData("info");
+        if (plr.GetData<bool>("sync"))
+            plr.RemoveData("sync");
 
         if (pend.ContainsKey(plr.Name))
             pend.Remove(plr.Name);
@@ -483,8 +533,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         if (data == null || plr.CurrentRegion.Name != data.RegName) return;
         if (data.RegionPlayers.Contains(plr))
             data.RegionPlayers.Remove(plr);
+
         UpdateData(data, plr.TPlayer);
-        DataManager.CanSave = true;
     }
     #endregion
 
@@ -505,7 +555,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     #endregion
 
     #region 刷新buff方法（由进入事件和Buff更新事件来驱动）
-    public static void RefreshBuffs(TSPlayer plr, MachData data)
+    private static void RefreshBuffs(TSPlayer plr, MachData data)
     {
         if (!Config.RegionBuffEnabled) return;
         if (!plr.Active || !data.RegionPlayers.Contains(plr)) return; // 玩家不在区域内，不刷新
@@ -539,94 +589,18 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         var data = GetDataByXY(plr.TileX, plr.TileY);
         if (data == null) return;
 
-        // 玩家与钓鱼机距离超过20格则跳过
+        // 玩家与钓鱼机距离超过10格则跳过
         // (避免从区域边界进来就更新，导致环境不一致)
         int dx = plr.TileX - data.Pos.X;
         int dy = plr.TileY - data.Pos.Y;
-        int dist = (int)Math.Sqrt(dx * dx + dy * dy); // 欧几里得距离
+        int dist = (int)MathF.Sqrt(dx * dx + dy * dy); // 欧几里得距离
         if (dist > Config.UpdateTileRange) return;
 
+        // 冷却检查 用于限频 避免频繁计算液体数量
         var sec = TimeSpan.FromSeconds(Config.UpdateInterval);
         if (DateTime.UtcNow - data.LastEnvUpdate <= sec) return;
 
         UpdateData(data, plr.TPlayer);
-    }
-
-    // 根据位置获取机器的空间索引(区域)
-    private static bool IsAfmRegion(string name) => name.StartsWith("afm_");
-    private static MachData? GetDataByXY(int x, int y)
-    {
-        var rgns = TShock.Regions.InAreaRegion(x, y);
-        foreach (var r in rgns)
-            if (IsAfmRegion(r.Name))
-                return DataManager.FindRegion(r.Name);
-        return null;
-    }
-    #endregion
-
-    #region 创建数据
-    public static void CreateData(TSPlayer plr, int index, Point pos)
-    {
-        // 检查箱子是否已被占用
-        var existing = DataManager.FindTile(pos);
-        if (existing != null)
-        {
-            plr.SendErrorMessage($"该箱子已被 {existing.Owner} 的钓鱼机占用");
-            return;
-        }
-
-        // 计算区域边界
-        int r = Config.Range;
-        int left = Math.Max(0, pos.X - r);
-        int top = Math.Max(0, pos.Y - r);
-        int right = Math.Min(Main.maxTilesX - 1, pos.X + r);
-        int bot = Math.Min(Main.maxTilesY - 1, pos.Y + r);
-        int w = right - left + 1;
-        int h = bot - top + 1;
-        var newRect = new Rectangle(left, top, w, h);
-
-        // 重叠检查
-        bool overlap = TShock.Regions.Regions.Any(rgn =>
-            rgn.WorldID == Main.worldID.ToString() &&
-            rgn.Area.Intersects(newRect) && IsAfmRegion(rgn.Name));
-
-        if (overlap)
-        {
-            plr.SendErrorMessage($"与其他钓鱼机距离过近（{Config.Range}格）");
-            return;
-        }
-
-        // 检查水体是否充足(不考虑连通性,UpdateData方法内部会缓存已连通的水域)
-        var Liq = EnvManager.QuickLiquidCheck(pos);
-        if (Liq < Config.NeedLiqStack)
-        {
-            plr.SendMessage($"箱子附近{Config.Range}格内液体不足{Config.NeedLiqStack}格", color2);
-            return;
-        }
-
-        // 创建区域
-        string rName = $"afm_{plr.Name}_{DateTime.Now.Ticks}";
-        bool ok = TShock.Regions.AddRegion(left, top, w, h, rName, plr.Name, Main.worldID.ToString(), 0);
-        if (!ok)
-        {
-            plr.SendErrorMessage("创建钓鱼区域失败！");
-            return;
-        }
-        TShock.Regions.SetRegionState(rName, Config.DisabledBuild);
-
-        // 创建新机器
-        var NewData = new MachData
-        {
-            Owner = plr.Name,
-            Pos = pos,
-            RegName = rName,
-            ChestIndex = index,
-            IntMach = true,
-            // 初始化下次执行时间为当前帧数 + 随机延迟，避免所有新机器同时执行
-            nextFrame = Timer + Main.rand.Next(Config.MinFrames, Config.MaxFrames + 1)
-        };
-
-        UpdateData(NewData, plr.TPlayer);
     }
     #endregion
 
@@ -634,14 +608,13 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     private static bool HasWiring(Point pos)
     {
         for (int x = pos.X; x < pos.X + 2; x++)
-        {
             for (int y = pos.Y; y < pos.Y + 2; y++)
             {
                 var tile = Main.tile[x, y];
                 if (tile != null && (tile.wire() || tile.wire2() || tile.wire3() || tile.wire4()))
                     return true;
             }
-        }
+
         return false;
     }
     #endregion
@@ -659,110 +632,132 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         data.ZoneBeach = plr.ZoneBeach;
         data.ZoneDungeon = plr.ZoneDungeon;
         data.ZoneRain = plr.ZoneRain;
+        data.luck = plr.luck;
 
         // 刷新环境（无需玩家）
         EnvManager.RefreshEnv(data);
-        DataManager.AddOrUpdate(data);
+        AddOrUpdate(data);
 
         // 标记环境已更新
         data.LastEnvUpdate = DateTime.UtcNow;
     }
     #endregion
 
-    #region 同步移除区域与钓鱼机
-    private static void RemoveRegion()
+    #region 创建数据
+    public static void CreateData(TSPlayer plr, int index, Point pos)
     {
+        var sw = Stopwatch.StartNew();
+
+        // 检查箱子是否已被占用
+        var existing = DataManager.GetDataByXY(pos.X, pos.Y);
+        if (existing != null)
+        {
+            plr.SendMessage($"该位置已被 {existing.Owner}的钓鱼机 [c/ED756F:{existing.ChestIndex}] 占用", color2);
+            sw.Stop();
+            return;
+        }
+
+        // 检查水体是否充足
+        if (EnvManager.QuickLiquidCheck(pos) < Config.NeedLiqStack)
+        {
+            plr.SendMessage($"箱子附近 {Config.Range}格 液体不足:{Config.NeedLiqStack}", color2);
+            sw.Stop();
+            return;
+        }
+
+        // 计算区域边界
+        int left, top, w, h;
+        string RegionName = $"afm_{plr.Name}_{index}";
+        string owner = plr.Name;
         string worldId = Main.worldID.ToString();
-        // 获取所有插件区域（名称以 "afm_" 开头）
-        var Regions = TShock.Regions.Regions
-            .Where(r => r.WorldID == worldId && r.Name.StartsWith("afm_"))
-            .ToList();
 
-        // 1. 删除孤立区域（没有对应机器的区域）
-        foreach (var r in Regions)
+        // 重叠检查
+        if (IsOverlap(pos, worldId, string.Empty, out left, out top, out w, out h))
         {
-            if (DataManager.FindRegion(r.Name) == null)
-            {
-                TShock.Log.ConsoleInfo($"[{PluginName}] 删除无效区域: {r.Name}");
-                TShock.Regions.DeleteRegion(r.Name);
-            }
+            sw.Stop();
+            return;
         }
 
-        // 2. 删除孤立机器（区域不存在的机器）
-        var Has = new List<MachData>();
-        foreach (var data in DataManager.Machines)
+        // 创建区域
+        if (TShock.Regions.AddRegion(left, top, w, h, RegionName, owner, worldId, 0))
+            TShock.Regions.SetRegionState(RegionName, Config.RegionBuild);
+
+        // 创建新机器
+        var data = new MachData
         {
-            if (!string.IsNullOrEmpty(data.RegName))
-            {
-                var region = TShock.Regions.GetRegionByName(data.RegName);
-                if (region == null)
-                {
-                    TShock.Log.ConsoleInfo($"[{PluginName}] 删除无效机器: {data.Owner}的钓鱼机 (区域 {data.RegName})");
-                    Has.Add(data);
-                }
-            }
-        }
+            Owner = plr.Name,
+            Pos = pos,
+            RegName = RegionName,
+            ChestIndex = index,
+            IntMach = true,
+            WorldId = worldId,
+        };
 
-        foreach (var machine in Has)
-            DataManager.Remove(machine.Pos);
+        UpdateData(data, plr.TPlayer);
 
-        // 如果有变更，保存数据
-        if (Has.Count > 0)
-            DataManager.CanSave = true;
+        sw.Stop();
+        TSPlayer.All.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 创建用时 {sw.ElapsedMilliseconds} ms"), color);
     }
     #endregion
 
     #region 更新区域大小与建筑保护
     private static void UpdateRegions()
     {
-        int updated = 0;
-        int failed = 0;
         foreach (var data in DataManager.Machines)
         {
             if (string.IsNullOrEmpty(data.RegName)) continue;
 
+            Point pos = data.Pos;
+            int left, top, w, h;
+            string RegionName = data.RegName;
+            string owner = data.Owner;
+            string worldId = Main.worldID.ToString();
+
             // 更新建筑保护
-            TShock.Regions.SetRegionState(data.RegName, Config.DisabledBuild);
+            TShock.Regions.SetRegionState(RegionName, Config.RegionBuild);
 
-            int r = Config.Range;
-            int left = Math.Max(0, data.Pos.X - r);
-            int top = Math.Max(0, data.Pos.Y - r);
-            int right = Math.Min(Main.maxTilesX - 1, data.Pos.X + r);
-            int bot = Math.Min(Main.maxTilesY - 1, data.Pos.Y + r);
-            int w = right - left + 1;
-            int h = bot - top + 1;
-
-            var newRect = new Rectangle(left, top, w, h);
-
-            // 检查新矩形是否与其它插件区域重叠
-            bool overlap = TShock.Regions.Regions.Any(rgn =>
-                rgn.WorldID == Main.worldID.ToString() &&
-                rgn.Name != data.RegName &&
-                IsAfmRegion(rgn.Name) &&
-                rgn.Area.Intersects(newRect));
-
-            if (overlap)
+            // 重叠检查
+            if (IsOverlap(pos, worldId, "更新", out left, out top, out w, out h))
             {
-                TShock.Log.ConsoleWarn($"[{PluginName}] 无法更新区域 {data.RegName}：新区域与其它钓鱼机区域重叠");
-                failed++;
                 continue;
             }
 
-            // 更新区域位置和大小
-            if (TShock.Regions.PositionRegion(data.RegName, left, top, w, h))
+            // 更新区域范围大小
+            if (TShock.Regions.PositionRegion(RegionName, left, top, w, h))
             {
-                updated++;
-            }
-            else
-            {
-                TShock.Log.ConsoleWarn($"[{PluginName}] 更新区域 {data.RegName} 失败");
-                failed++;
+                TSPlayer.All.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 区域已更新"), color);
             }
         }
-        if (updated > 0 || failed > 0)
+    }
+    #endregion
+
+    #region 检查区域重叠
+    private static bool IsOverlap(Point pos, string worldId, string state, out int left, out int top, out int w, out int h)
+    {
+        int r = Config.Range;
+        left = (int)MathF.Max(0, pos.X - r);
+        top = (int)MathF.Max(0, pos.Y - r);
+        int right = (int)MathF.Min(Main.maxTilesX - 1, pos.X + r);
+        int bot = (int)MathF.Min(Main.maxTilesY - 1, pos.Y + r);
+        w = right - left + 1;
+        h = bot - top + 1;
+        Rectangle newRect = new Rectangle(left, top, w, h);
+
+        if (TShock.Regions.Regions.Any(rgn => rgn.WorldID == worldId && rgn.Area.Intersects(newRect)))
         {
-            TShock.Log.ConsoleInfo($"[{PluginName}] 更新区域完成: 成功 {updated} 个, 失败 {failed} 个");
+            if (!string.IsNullOrEmpty(state))
+            {
+                string mess = $"钓鱼区 {pos.X},{pos.Y} {state}失败：\n" +
+                              $"1.钓鱼机与其它区域重叠\n" +
+                              $"2.与其他钓鱼机距离过近（{Config.Range}格）";
+
+                TShock.Utils.Broadcast(TextGradient(mess), color);
+            }
+
+            return true;
         }
+
+        return false;
     }
     #endregion
 

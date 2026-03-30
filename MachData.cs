@@ -1,12 +1,34 @@
 ﻿using Microsoft.Xna.Framework;
 using Newtonsoft.Json;
+using Terraria;
 using TShockAPI;
 
 namespace FishMach;
 
 #region 机器数据
+public class CustomState
+{
+    [JsonProperty("名称")]
+    public string ItemName { get; set; } = string.Empty;
+    [JsonProperty("槽位")]
+    public int Slot { get; set; }
+    [JsonProperty("时间")]
+    public DateTime Expiry { get; set; }
+    [JsonProperty("加成")]
+    public int Bonus { get; set; }
+
+    public CustomState(int slot, DateTime expiry, int bonus,string name)
+    {
+        Slot = slot;
+        Expiry = expiry;
+        Bonus = bonus;
+        ItemName = name;
+    }
+}
 public class MachData
 {
+    [JsonProperty("世界ID")]
+    public string WorldId { get; set; } = "";
     [JsonProperty("所有者")]
     public string Owner { get; set; } = "";
     [JsonProperty("区域名")]
@@ -37,17 +59,30 @@ public class MachData
     public int HeightLevel { get; set; }
     [JsonProperty("颠倒海洋")]
     public bool RolledRemixOcean { get; set; }
-
-    [JsonProperty("液体名称")]
+    [JsonProperty("钓鱼药水时间")]
+    public DateTime FishingPotionTime { get; set; } = DateTime.MinValue;
+    [JsonProperty("宝匣药水时间")]
+    public DateTime CratePotionTime { get; set; } = DateTime.MinValue;
+    [JsonProperty("鱼饵桶时间")]
+    public DateTime ChumBucketTime { get; set; } = DateTime.MinValue;
+    [JsonProperty("鱼池名称")]
     public string LiqName { get; set; }
-    [JsonProperty("液体数量")]
+    [JsonProperty("鱼池格数")]
     public int MaxLiq { get; set; }
     [JsonProperty("液体坐标")]
     public Point LiquidPos { get; set; } = new Point(-1, -1);
-    [JsonProperty("大气因子")]
-    public float atmo { get; set; }
+    [JsonProperty("幸运值")]
+    public float luck { get; set; }
     [JsonProperty("额外渔力")]
     public int ExtraPower { get; set; }
+    [JsonProperty("可钓岩浆")]
+    public bool CanFishInLava { get; set; }
+    [JsonProperty("钓具箱")]
+    public bool HasTackle { get; set; }
+    [JsonProperty("自定义消耗品")]
+    public Dictionary<int, CustomState> Custom { get; set; } = new();
+    [JsonProperty("区域增益")]
+    public Dictionary<int, DateTime> ActiveZoneBuffs { get; set; } = new();
     [JsonProperty("排除物品")]
     public HashSet<int> Exclude { get; set; } = new();
 
@@ -68,36 +103,24 @@ public class MachData
     // 宝匣药水槽位与消耗时间
     [JsonIgnore]
     public int CratePotionSlot { get; set; } = -1;
+
+    // 大气因子
     [JsonIgnore]
-    public DateTime CratePotionTime { get; set; } = DateTime.MinValue;
+    public float atmo { get; set; }
+
 
     // 钓鱼药水槽位与消耗时间
     [JsonIgnore]
     public int FishingPotionSlot { get; set; } = -1;
-    [JsonIgnore]
-    public DateTime FishingPotionTime { get; set; } = DateTime.MinValue;
 
     // 鱼饵桶
     [JsonIgnore]
     public int ChumBucketSlot { get; set; } = -1;
-    [JsonIgnore]
-    public DateTime ChumBucketTime { get; set; } = DateTime.MinValue;  // 效果过期时间
+
 
     // 自定义消耗物品与对应BUFF和玩家表
     [JsonIgnore]
-    public Dictionary<int, (int Slot, DateTime Expiry, int Bonus)> CustomConsumables { get; set; } = new();
-    [JsonIgnore]
-    public Dictionary<int, DateTime> ActiveZoneBuffs { get; set; } = new();
-    [JsonIgnore]
     public HashSet<TSPlayer> RegionPlayers { get; set; } = new();
-
-    // 可以钓岩浆
-    [JsonIgnore]
-    public bool CanFishInLava { get; set; }
-
-    // 减少鱼饵消耗（箱子有钓具箱）
-    [JsonIgnore]
-    public bool HasTackle { get; set; }
 
     // 环境需要更新标志
     [JsonIgnore]

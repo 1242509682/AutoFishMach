@@ -3,6 +3,7 @@ using Microsoft.Xna.Framework;
 using Terraria;
 using Terraria.ID;
 using TShockAPI;
+using TShockAPI.Hooks;
 using static FishMach.DataManager;
 using static FishMach.Plugin;
 using static FishMach.Utils;
@@ -56,34 +57,73 @@ internal class MyCommand
                     var all = Machines;
                     if (all.Count == 0)
                     {
-                        plr.SendInfoMessage("没有自动钓鱼机");
+                        plr.SendMessage($"没有自动钓鱼机", color);
                         return;
                     }
 
                     int page = 1;
                     if (args.Parameters.Count > 1 && !int.TryParse(args.Parameters[1], out page)) page = 1;
 
-                    int index = 1;
-                    List<string> lines = [];
-                    foreach (var data in all)
+                    // 每页显示的数量（可调整此数值）
+                    int max = 4; // 每页最多显示4个自动钓鱼机
+
+                    // 计算当前页的起始和结束索引
+                    int start = (page - 1) * max; // 当前页第一个项目的索引
+                    int end = (int)MathF.Min(start + max, all.Count); // 当前页最后一个项目的索引
+
+                    // 计算总页数（根据实际项目数量计算）
+                    int total = (int)MathF.Ceiling((float)((double)all.Count / max)); // 总页数
+
+                    // 验证页码是否超出范围
+                    if (page > total)
                     {
-                        int baitCount = AutoFishing.GetBaitCount(data.ChestIndex);
-                        string baitInfo = baitCount > 0 ? $"鱼饵:{baitCount}" : "鱼饵:无";
-                        string rodName = AutoFishing.GetRodName(data); // 动态获取鱼竿名称
-
-                        lines.Add(
-                            $"{index}.{data.Owner}的钓鱼机 " +
-                            $"鱼竿:{rodName} {baitInfo} " +
-                            $"坐标:{data.Pos.X},{data.Pos.Y}");
-
-                        index++;
+                        plr.SendErrorMessage($"页码超出范围，总共有 {total} 页");
+                        return;
                     }
 
-                    PaginationTools.SendPage(plr, page, lines, new PaginationTools.Settings
+                    // 创建包含所有行的StringBuilder
+                    var sb = new StringBuilder();
+                    sb.AppendLine($"自动钓鱼机列表 ({page}/{total})"); // 显示当前页/总页数
+
+                    // 遍历当前页的所有项目
+                    for (int i = start; i < end; i++)
                     {
-                        HeaderFormat = "自动钓鱼机列表 ({0}/{1})",
-                        FooterFormat = $"输入 /{afm} list {0} 查看更多"
-                    });
+                        var data = all[i];
+                        int idx = i - start + 1; // 在当前页中的显示序号（从1开始）
+
+                        var env = new List<string>();
+                        var env2 = MyCommand.GetHeightName(data.HeightLevel);
+                        if (data.ZoneHallow) env.Add("神圣");
+                        if (data.ZoneCorrupt) env.Add("腐化");
+                        if (data.ZoneCrimson) env.Add("猩红");
+                        if (data.ZoneJungle) env.Add("丛林");
+                        if (data.ZoneSnow) env.Add("雪原");
+                        if (data.ZoneDesert) env.Add("沙漠");
+                        if (data.ZoneBeach) env.Add("海洋");
+                        if (data.ZoneDungeon) env.Add("地牢");
+                        if (data.RolledRemixOcean) env.Add("颠倒海洋");
+
+                        // 修复性能问题：缓存鱼竿和鱼饵类型
+                        int rodType = data.RodSlot != -1 ? Main.chest[data.ChestIndex]?.item[data.RodSlot]?.type ?? -1 : -1;
+                        string rodInfo = rodType > 0 ? $"鱼竿:{ItemIcon(rodType)}" : "鱼竿:无";
+
+                        int baitType = data.BaitSlot != -1 ? Main.chest[data.ChestIndex]?.item[data.BaitSlot]?.type ?? -1 : -1;
+                        int baitStack = baitType > 0 ? Main.chest[data.ChestIndex]?.item[data.BaitSlot]?.stack ?? 0 : 0;
+                        string baitInfo = baitType > 0 ? $"鱼饵:{ItemIcon(baitType, baitStack)}" : "鱼饵:无";
+
+                        string line = $"{idx}.{data.Owner}的钓鱼机 [c/ED756F:{data.ChestIndex}] " +
+                                     $"{rodInfo} {baitInfo}\n" +
+                                     $"坐标 {data.Pos.X},{data.Pos.Y} " +
+                                     $"环境 {env2},{string.Join(",", env)}";
+
+                        sb.AppendLine(line);
+                    }
+
+                    // 根据实际页数显示下一页提示
+                    if (page < total)
+                        sb.AppendLine($"输入 /{afm} list {page + 1} 查看第 {page + 1} 页");
+
+                    plr.SendMessage(TextGradient(sb.ToString()), color);
                 }
                 break;
 
@@ -92,18 +132,82 @@ internal class MyCommand
                 {
                     if (!plr.RealPlayer) return;
 
+                    if (plr.CurrentRegion != null &&
+                        IsAfmRegion(plr.CurrentRegion.Name))
+                    {
+                        var data = GetDataByXY(plr.TileX, plr.TileY);
+                        if (data == null) return;
+                        ShowMachineInfo(plr, data);
+                        return;
+                    }
+
                     if (plr.ActiveChest == -1)
                     {
                         plr.SetData("info", true);
                         plr.SendMessage(TextGradient("请打开要查看的钓鱼箱...\n"), color);
                         return;
                     }
+                }
+                break;
 
-                    var chest = Main.chest[plr.ActiveChest];
-                    if (chest == null) return;
-                    var data = DataManager.FindChest(plr.ActiveChest);
-                    if (data == null) return;
-                    ShowMachineInfo(plr, data);
+            case "sv":
+            case "save":
+            case "sync":
+            case "更新":
+            case "同步":
+                {
+                    if (!plr.RealPlayer)
+                    {
+                        plr.SendErrorMessage("请进入游戏后再使用指令");
+                        return;
+                    }
+
+                    // 检查玩家是否在钓鱼机区域内
+                    if (plr.CurrentRegion != null && IsAfmRegion(plr.CurrentRegion.Name))
+                    {
+                        var data = DataManager.FindRegion(plr.CurrentRegion.Name);
+
+                        // 区域存在但数据丢失，删除区域
+                        if (data == null)
+                        {
+                            TShock.Regions.DeleteRegion(plr.CurrentRegion.Name);
+                            plr.SendMessage(TextGradient($"数据丢失,已删除无效区域 {plr.CurrentRegion.Name}"), color);
+                            return;
+                        }
+
+                        // 区域存在,箱子丢失,删除区域
+                        var chest2 = Main.chest[data.ChestIndex];
+                        if (chest2 == null || chest2.x != data.Pos.X || chest2.y != data.Pos.Y)
+                        {
+                            // 箱子已被移除或移动，区域无效，删除区域和机器
+                            TShock.Regions.DeleteRegion(plr.CurrentRegion.Name);
+                            DataManager.Remove(data.Pos);
+                            TShock.Utils.Broadcast($"钓鱼机 [c/ED756F:{data.ChestIndex}] 已不存在\n" +
+                                                   $"删除无效区域: {plr.CurrentRegion.Name}", color);
+                            return;
+                        }
+
+                        // 距离检查,太远了,让玩家打开箱子
+                        int dx = plr.TileX - data.Pos.X;
+                        int dy = plr.TileY - data.Pos.Y;
+                        int dist = (int)MathF.Sqrt(dx * dx + dy * dy);
+                        if (dist > Config.UpdateTileRange)
+                        {
+                            plr.SetData("sync", true);
+                            plr.SendMessage(TextGradient("请打开要同步数据的钓鱼机箱子..."), color);
+                            return;
+                        }
+
+                        // 立即更新数据
+                        UpdateData(data, plr.TPlayer);
+                        EnvManager.UpdateItemCache(data);
+                        plr.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 数据已同步"), color);
+                        return;
+                    }
+
+                    // 不在区域内，让玩家打开箱子
+                    plr.SetData("sync", true);
+                    plr.SendMessage(TextGradient("请打开要同步数据的钓鱼机箱子..."), color);
                 }
                 break;
 
@@ -162,7 +266,7 @@ internal class MyCommand
         if (!plr.RealPlayer)
         {
             plr.SendMessage($"《自动钓鱼机》", color);
-            plr.SendMessage($"/{afm} ls - 列出自钓机表", color);
+            plr.SendMessage($"/{afm} ls - 列出钓鱼机表", color);
             plr.SendMessage($"/{afm} lt - 查看自定渔获", color);
             plr.SendMessage($"/{afm} cd - 查看自定条件", color);
             plr.SendMessage($"/{afm} rs - 重置插件数据", color);
@@ -174,9 +278,10 @@ internal class MyCommand
                             "[i:3456][C/F2F2C7:开发] [C/BFDFEA:by] [c/00FFFF:羽学] [i:3459]", color);
 
             var mess = new StringBuilder();
-            mess.AppendLine($"/{afm} s - 将箱子设为自钓机");
-            mess.AppendLine($"/{afm} if - 获取自钓机信息");
-            mess.AppendLine($"/{afm} ls - 列出所有自钓机");
+            mess.AppendLine($"/{afm} s - 将箱子设为钓鱼机");
+            mess.AppendLine($"/{afm} if - 获取钓鱼机信息");
+            mess.AppendLine($"/{afm} sv - 同步更新钓鱼机");
+            mess.AppendLine($"/{afm} ls - 列出所有钓鱼机");
             mess.AppendLine($"/{afm} lt - 查看自定渔获");
             mess.AppendLine($"/{afm} exc - 批量修改排除物品表");
             if (IsAdmin(plr))
@@ -221,13 +326,10 @@ internal class MyCommand
         // 大气因子
         float atmo = data.atmo;
 
-        // 液体需求
-        int waterNeeded = (int)(300f * atmo);
-        // 液体质量
-        float waterQuality = Math.Min(1f, (float)data.MaxLiq / waterNeeded);
-
         // 基础渔力 鱼竿+鱼饵
-        int power = AutoFishing.GetRodPower(data) + AutoFishing.GetBaitPower(data);
+        int rodPower = data.RodSlot != -1 ? Main.chest[data.ChestIndex]?.item[data.RodSlot]?.fishingPole ?? -1 : -1;
+        int baitPower = data.BaitSlot != -1 ? Main.chest[data.ChestIndex]?.item[data.BaitSlot]?.bait ?? -1 : -1;
+        int power = rodPower + baitPower;
         power += data.ExtraPower;
 
         // 钓鱼药水临时加成（+20）
@@ -239,28 +341,68 @@ internal class MyCommand
         int customBonus = 0;
         if (Config.CustomUsedItem.Count > 0)
             foreach (var consumable in Config.CustomUsedItem)
-                if (data.CustomConsumables.TryGetValue(consumable.ItemType, out var state) && state.Expiry > DateTime.UtcNow)
+                if (data.Custom.TryGetValue(consumable.ItemType, out var state) && state.Expiry > DateTime.UtcNow)
                     customBonus += state.Bonus;
 
         power += customBonus;
 
-        // 含水鱼力
+        // 水体质量（蜂蜜 1.5 倍）
+        int effectiveWater = data.MaxLiq;
+        if (data.LiqName == "蜂蜜")
+            effectiveWater = (int)(effectiveWater * 1.5);
+        int waterNeeded = (int)(300f * data.atmo);
+        float waterQuality = MathF.Min(1f, (float)effectiveWater / waterNeeded);
+
+        // 含水鱼力(实际渔力)
         int finalPower = (int)(power * waterQuality);
 
+        // 幸运值影响范围（基于含水渔力）
+        int luckMin = finalPower;
+        int luckMax = finalPower;
+        if (data.luck > 0.001f)
+        {
+            luckMin = finalPower;
+            luckMax = (int)(finalPower * 1.4);
+        }
+        else if (data.luck < -0.001f)
+        {
+            luckMin = (int)(finalPower * 0.6);
+            luckMax = finalPower;
+        }
+        string luckText = Math.Abs(data.luck) > 0.001f ? $"实际渔力:[c/FFAA6D:{luckMin}~{luckMax}]" : $"实际渔力:[c/FFAA6D:{finalPower}]";
+
         // 输出环境信息
-        plr.SendMessage(TextGradient($"\n《[c/E8EB6E:{data.Owner}]的钓鱼机》 当前 [c/FF716D:{data.RegionPlayers.Count}] 人"), color);
-        var mess = new StringBuilder();
+        plr.SendMessage(TextGradient($"\n[c/E8EB6E:{data.Owner}] " +
+                                     $"钓鱼机 [c/ED756F:{data.ChestIndex}] " +
+                                     $"[c/75D1FF:{data.RegionPlayers.Count}] 人"), color);
+
+        // 使用缓存的鱼竿和鱼饵信息
+        int rodType = data.RodSlot != -1 ? Main.chest[data.ChestIndex]?.item[data.RodSlot]?.type ?? -1 : -1;
+        string rodInfo = rodType > 0 ? $"鱼竿:{ItemIcon(rodType)}" : "鱼竿:无";
+
+        int baitType = data.BaitSlot != -1 ? Main.chest[data.ChestIndex]?.item[data.BaitSlot]?.type ?? -1 : -1;
+        int baitStack = baitType > 0 ? Main.chest[data.ChestIndex]?.item[data.BaitSlot]?.stack ?? 0 : 0;
+        string baitInfo = baitType > 0 ? $"鱼饵:{ItemIcon(baitType, baitStack)}" : "鱼饵:无";
+
+
         // 其他环境参数
-        mess.AppendLine($"在钓液体:{data.LiqName} [c/61BFE2:{data.MaxLiq}]格");
+        var mess = new StringBuilder();
+        mess.AppendLine($"{rodInfo} {baitInfo}");
+        mess.AppendLine($"鱼池:{data.LiqName} [c/61BFE2:{data.MaxLiq}]格");
         mess.AppendLine($"附近 水 [c/61BFE2:{data.WatCnt}]格 岩浆 [c/FF716D:{data.LavCnt}]格 蜂蜜 [c/FFE46D:{data.HonCnt}]格");
         mess.AppendLine($"液体需求:[c/FF716D:{waterNeeded}] 液体质量:[c/FFA866:{waterQuality:P0}]");
-        mess.AppendLine($"渔力:[c/61E26C:{power}]点 含水:[c/FFAA6D:{finalPower}]");
+
+        // 幸运值显示
+        if (Math.Abs(data.luck) > 0.001f)
+            mess.AppendLine($"幸运值:[c/61E26C:{data.luck:F2}] (影响渔力±10%~40%)");
+
+        mess.AppendLine($"基础渔力:[c/61E26C:{power}]点 {luckText}");
         mess.AppendLine($"熔岩钓鱼:{(data.CanFishInLava ? "是" : "否")} 节省鱼饵:{(data.HasTackle ? "是" : "否")}");
         mess.AppendLine($"需要电路:{(Config.NeedWiring ? "是" : "否")} 钓任务鱼:{(Config.QuestFish ? "是" : "否")}");
-        mess.AppendLine($"区域保护:{(Config.DisabledBuild ? "是 " : "否 ")} 范围:[c/61BCE3:{Config.Range}]格");
+        mess.AppendLine($"区域保护:{(Config.RegionBuild ? "是 " : "否 ")} 范围:[c/61BCE3:{Config.Range}]格");
         mess.AppendLine($"无人关闭:{(Config.AutoStopWhenEmpty ? "是" : "否")} 自动整理:{(Config.AutoPut ? "是" : "否")}");
-        mess.AppendLine($"允许怪物:{(Config.EnableCustomNPC ? "是" : "否")}");
-        mess.AppendLine($"禁钓多怪:{(Config.SoloCustomMonster ? "是" : "否")} 模式:{(Config.SoloMode == 0 ? "不同类各[c/61BBE2:1]个" : "只钓[c/FFAC6D:1]个")}");
+        mess.AppendLine($"允许怪物:{(Config.EnableCustomNPC ? "是" : "否")} 禁钓多怪:{(Config.SoloCustomMonster ? "是" : "否")}");
+        mess.AppendLine($"禁怪模式:{(Config.SoloMode == 0 ? "不同类各[c/61BBE2:1]个" : "只钓[c/FFAC6D:1]个")}");
 
         // 宝匣药水
         if (data.CratePotionTime > DateTime.UtcNow)
@@ -283,25 +425,6 @@ internal class MyCommand
             mess.AppendLine($"鱼饵桶:剩余[c/FF766D:{FormatRemaining(min)}]");
         }
 
-        // 自定义消耗物品
-        if (Config.CustomUsedItem.Count > 0)
-        {
-            int idx = 1;  // 序号从1开始
-            mess.AppendLine($"区域buff:");
-            foreach (var UsedItem in Config.CustomUsedItem)
-                if (data.CustomConsumables.TryGetValue(UsedItem.ItemType, out var state) && state.Expiry > DateTime.UtcNow)
-                {
-                    double min = (state.Expiry - DateTime.UtcNow).TotalMinutes;
-                    if (UsedItem.BuffID > 0)
-                    {
-                        string buffName = $"{UsedItem.BuffName} ";
-                        string buffDesc = $"[c/5F9DB8:-] {UsedItem.BuffDesc}";
-                        mess.AppendLine($"{idx}.{buffName} 剩余[c/61BBE2:{FormatRemaining(min)}] \n{buffDesc}");
-                        idx++;
-                    }
-                }
-        }
-
         var env = new List<string>();
         var env2 = MyCommand.GetHeightName(data.HeightLevel);
         if (data.ZoneHallow) env.Add("神圣");
@@ -316,9 +439,130 @@ internal class MyCommand
         mess.AppendLine($"[c/63D475:钓鱼环境]:{env2},{string.Join(",", env)}");
         plr.SendMessage(TextGradient(mess.ToString()), color2);
 
+        // 自定义消耗物品
+        var sb = new StringBuilder();
+        if (Config.CustomUsedItem.Count > 0)
+        {
+            int idx = 1;  // 序号从1开始
+            foreach (var UsedItem in Config.CustomUsedItem)
+                if (data.Custom.TryGetValue(UsedItem.ItemType, out var state) && state.Expiry > DateTime.UtcNow)
+                {
+                    double min = (state.Expiry - DateTime.UtcNow).TotalMinutes;
+                    if (UsedItem.BuffID > 0)
+                    {
+                        string buffName = $"{UsedItem.BuffName} ";
+                        string buffDesc = $"[c/5F9DB8:-] {UsedItem.BuffDesc}";
+                        sb.AppendLine($"{idx}.{buffName} 剩余[c/61BBE2:{FormatRemaining(min)}] \n{buffDesc}");
+                        idx++;
+                    }
+                }
+        }
+
+        if (!string.IsNullOrEmpty(sb.ToString()))
+            plr.SendMessage("[区域增益]\n" + TextGradient(sb.ToString()), color2);
+
         // 显示排除物品列表
-        string NoItem = data.Exclude.Count > 0 ? string.Join(", ", data.Exclude.Select(id => $"{ItemIcon(id)}")) : "无";
-        plr.SendMessage($"排除物品: {NoItem}", color);
+        string NoItem = data.Exclude.Count > 0 ? string.Join(", ", data.Exclude.Select(id => $"{ItemIcon(id)}")) : string.Empty;
+        if (!string.IsNullOrEmpty(NoItem))
+            plr.SendMessage($"排除物品: {NoItem}", color);
+    }
+    #endregion
+
+    #region 进入区域信息
+    public static void RegionInfo(RegionHooks.RegionEnteredEventArgs args, MachData data)
+    {
+        var plr = args.Player;
+
+        var env = new List<string>();
+        var env2 = MyCommand.GetHeightName(data.HeightLevel);
+        if (data.ZoneHallow) env.Add("神圣");
+        if (data.ZoneCorrupt) env.Add("腐化");
+        if (data.ZoneCrimson) env.Add("猩红");
+        if (data.ZoneJungle) env.Add("丛林");
+        if (data.ZoneSnow) env.Add("雪原");
+        if (data.ZoneDesert) env.Add("沙漠");
+        if (data.ZoneBeach) env.Add("海洋");
+        if (data.ZoneDungeon) env.Add("地牢");
+        if (data.RolledRemixOcean) env.Add("颠倒海洋");
+
+        // 计算当前渔力
+        int rodPower = data.RodSlot != -1 ? Main.chest[data.ChestIndex]?.item[data.RodSlot]?.fishingPole ?? -1 : -1;
+        int baitPower = data.BaitSlot != -1 ? Main.chest[data.ChestIndex]?.item[data.BaitSlot]?.bait ?? -1 : -1;
+        int extraPower = data.ExtraPower;
+        int tempPower = 0;
+        if (DateTime.UtcNow < data.FishingPotionTime) tempPower += Config.FishingPotionPower;
+        if (DateTime.UtcNow < data.ChumBucketTime) tempPower += Config.ChumBucketPower;
+        if (Config.CustomUsedItem.Count > 0)
+            foreach (var UsedItem in Config.CustomUsedItem)
+                if (data.Custom.TryGetValue(UsedItem.ItemType, out var state) && state.Expiry > DateTime.UtcNow)
+                    tempPower += state.Bonus;
+        int Power = rodPower + baitPower + extraPower + tempPower;
+
+        // 水体质量（蜂蜜 1.5 倍）
+        int effectiveWater = data.MaxLiq;
+        if (data.LiqName == "蜂蜜")
+            effectiveWater = (int)(effectiveWater * 1.5);
+        int waterNeeded = (int)(300f * data.atmo);
+        float waterQuality = MathF.Min(1f, (float)effectiveWater / waterNeeded);
+        int finalPower = (int)(Power * waterQuality);
+
+        // 幸运值影响范围（基于含水渔力）
+        int luckMin = finalPower;
+        int luckMax = finalPower;
+        if (data.luck > 0.001f)
+        {
+            luckMin = finalPower;
+            luckMax = (int)(finalPower * 1.4);
+        }
+        else if (data.luck < -0.001f)
+        {
+            luckMin = (int)(finalPower * 0.6);
+            luckMax = finalPower;
+        }
+        string luckText = Math.Abs(data.luck) > 0.001f ? $"[c/FFAA6D:{luckMin}~{luckMax}]" : $"[c/FFAA6D:{finalPower}]";
+
+        var PowerText = string.Empty;
+        if (Power > 0)
+            PowerText = TextGradient($"渔力 {Power}({luckText})");
+
+        // 获取鱼竿和鱼饵数量的图标（使用缓存）
+        int rodType = data.RodSlot != -1 ? Main.chest[data.ChestIndex]?.item[data.RodSlot]?.type ?? -1 : -1;
+        string rodInfo = rodType > 0 ? $"鱼竿 {ItemIcon(rodType)}" : "鱼竿 无";
+
+        int baitType = data.BaitSlot != -1 ? Main.chest[data.ChestIndex]?.item[data.BaitSlot]?.type ?? -1 : -1;
+        int baitStack = baitType > 0 ? Main.chest[data.ChestIndex]?.item[data.BaitSlot]?.stack ?? 0 : 0;
+        string baitInfo = baitType > 0 ? $"鱼饵 {ItemIcon(baitType, baitStack)}" : "鱼饵 无";
+
+        plr.SendMessage(TextGradient($"欢迎来到钓鱼机 [c/ED756F:{data.ChestIndex}] " +
+                                     $"[c/75D1FF:{data.RegionPlayers.Count}] 人"), color);
+        plr.SendMessage($"归属 [c/E8EB6E:{data.Owner}] {rodInfo} {baitInfo}", color2);
+        plr.SendMessage(TextGradient($"环境 {env2},{string.Join(",", env)}"), color);
+        plr.SendMessage(TextGradient($"鱼池 {data.LiqName} [c/61BFE2:{data.MaxLiq}] 格 {PowerText}"), color);
+
+        var mess = new StringBuilder();
+        if (Config.CustomUsedItem.Count > 0)
+        {
+            int idx = 1;
+            foreach (var UsedItem in Config.CustomUsedItem)
+                if (data.Custom.TryGetValue(UsedItem.ItemType, out var state) && state.Expiry > DateTime.UtcNow)
+                {
+                    double min = (state.Expiry - DateTime.UtcNow).TotalMinutes;
+                    if (UsedItem.BuffID > 0)
+                    {
+                        string ItemIcon = $"{Utils.ItemIcon(UsedItem.ItemType)}";
+                        string buffDesc = $"[c/5F9DB8:-] {UsedItem.BuffDesc}";
+                        mess.AppendLine($"{idx}.{ItemIcon} 剩余[c/61BBE2:{FormatRemaining(min)}] \n{buffDesc}");
+                        idx++;
+                    }
+                }
+        }
+
+        if (!string.IsNullOrEmpty(mess.ToString()))
+            plr.SendMessage(TextGradient("[区域增益]\n" + mess.ToString()), color);
+
+        string NoItem = data.Exclude.Count > 0 ? string.Join(", ", data.Exclude.Select(id => $"{ItemIcon(id)}")) : string.Empty;
+        if (!string.IsNullOrEmpty(NoItem))
+            plr.SendMessage($"排除物品: {NoItem}", color);
     }
     #endregion
 
@@ -390,8 +634,7 @@ internal class MyCommand
             }
         }
 
-        CanSave = true;
-        Save();
+        Save(data);
         pend.Remove(plr.Name);
         string NoItem = data.Exclude.Count > 0 ? string.Join(", ", data.Exclude.Select(id => $"{ItemIcon(id)}")) : "无";
         plr.SendMessage($"\n更新后的排除物品表: {NoItem}", color2);
@@ -561,7 +804,7 @@ internal class MyCommand
 
             int npcX = (int)(npc.position.X / 16);
             int npcY = (int)(npc.position.Y / 16);
-            int dist = Math.Abs(npcX - playerPos.X) + Math.Abs(npcY - playerPos.Y); // 曼哈顿距离
+            int dist = (int)MathF.Abs(npcX - playerPos.X) + (int)MathF.Abs(npcY - playerPos.Y); // 曼哈顿距离
             if (dist <= 85)
             {
                 bool exists = Config.CustomFishes.Any(r => r.NPCType == npc.type);
@@ -703,11 +946,11 @@ internal class MyCommand
         if (page < 1) page = 1;
 
         int perPage = 10;
-        int total = (int)Math.Ceiling(conds.Count / (double)perPage);
+        int total = (int)MathF.Ceiling((float)(conds.Count / (double)perPage));
         if (page > total) page = total;
 
         int start = (page - 1) * perPage;
-        int end = Math.Min(start + perPage, conds.Count);
+        int end = (int)MathF.Min(start + perPage, conds.Count);
 
         var sb = new StringBuilder();
         sb.AppendLine($"[c/47D3C3:可用条件列表 (第 {page}/{total} 页)]");
@@ -739,11 +982,11 @@ internal class MyCommand
         if (page < 1) page = 1;
 
         int perPage = 10;
-        int total = (int)Math.Ceiling(Config.CustomFishes.Count / (double)perPage);
+        int total = (int)MathF.Ceiling((float)(Config.CustomFishes.Count / (double)perPage));
         if (page > total) page = total;
 
         int start = (page - 1) * perPage;
-        int end = Math.Min(start + perPage, Config.CustomFishes.Count);
+        int end = (int)MathF.Min(start + perPage, Config.CustomFishes.Count);
 
         var sb = new StringBuilder();
         sb.AppendLine($"[c/47D3C3:自定义渔获列表 (第{page}/{total}页)]");

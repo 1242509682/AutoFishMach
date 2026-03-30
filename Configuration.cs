@@ -8,20 +8,26 @@ namespace FishMach;
 internal class Configuration
 {
     #region 配置项成员
-    [JsonProperty("自定渔获进度参考", Order = -1)]
+    [JsonProperty("自定渔获进度参考", Order = -10)]
     public List<string> Reference = new();
-    [JsonProperty("使用方法", Order = 0)]
+    [JsonProperty("使用方法", Order = -9)]
     public List<string> Text { get; set; } = new();
-    [JsonProperty("插件开关", Order = 1)]
+    [JsonProperty("插件开关", Order = -8)]
     public bool Enabled { get; set; } = true;
-    [JsonProperty("钓任务鱼", Order = 2)]
+    [JsonProperty("钓任务鱼", Order = -7)]
     public bool QuestFish { get; set; } = true;
+    [JsonProperty("假鱼动画", Order = -6)]
+    public bool FakeFish { get; set; } = true;
+    [JsonProperty("物品动画", Order = -5)]
+    public bool ChestTransfer { get; set; } = true;
+    [JsonProperty("闪光动画", Order = -4)]
+    public bool Sparkle { get; set; } = true;
     [JsonProperty("警告广播", Order = 3)]
     public bool Broadcast { get; set; } = true;
     [JsonProperty("自动整理", Order = 5)]
     public bool AutoPut { get; set; } = true;
     [JsonProperty("区域保护", Order = 6)]
-    public bool DisabledBuild { get; set; } = false;
+    public bool RegionBuild { get; set; } = false;
     [JsonProperty("区域广播", Order = 7)]
     public bool RegionBroadcast { get; set; } = true;
     [JsonProperty("区域范围格数", Order = 8)]
@@ -31,17 +37,15 @@ internal class Configuration
     [JsonProperty("需要水量", Order = 10)]
     public int NeedLiqStack { get; set; } = 75;
     [JsonProperty("需要电路", Order = 11)]
-    public bool NeedWiring { get; set; } = false;
+    public bool NeedWiring { get; set; } = true;
     [JsonProperty("电路限频", Order = 12)]
-    public bool LimitFrames { get; set; } = false;
+    public bool LimitFrames { get; set; } = true;
     [JsonProperty("钓鱼间隔", Order = 13)]
     public string FishInterval { get; set; } = "60,240";
     [JsonProperty("更新缓存秒数", Order = 14)]
     public int UpdateInterval { get; set; } = 60;
     [JsonProperty("靠近更新范围", Order = 15)]
-    public int UpdateTileRange { get; set; } = 20;
-    [JsonProperty("保存缓存秒数", Order = 16)]
-    public int SaveInterval { get; set; } = 60;
+    public int UpdateTileRange { get; set; } = 10;
     [JsonProperty("宝匣药水加成", Order = 17)]
     public int CratePotionBonus { get; set; } = 15;
     [JsonProperty("钓鱼药水加成", Order = 18)]
@@ -110,7 +114,8 @@ internal class Configuration
 
         CustomUsedItem = new List<CustomUsedItems>
         {
-            new CustomUsedItems{ ItemType = ItemID.FeatherfallPotion, Minutes = 5, Power = 5, BuffID = BuffID.Featherfall, }
+            new CustomUsedItems{ ItemType = ItemID.FeatherfallPotion, Minutes = 5, Power = 5, BuffID = BuffID.Featherfall, },
+            new CustomUsedItems{ ItemType = ItemID.SonarPotion, Minutes = 5, Power = 5, BuffID = BuffID.Sonar, },
         };
 
         CustomFishes = new()
@@ -157,8 +162,8 @@ internal class Configuration
                  int.TryParse(parts[0], out int min) &&
                  int.TryParse(parts[1], out int max))
         {
-            MinFrames = Math.Min(min, max);
-            MaxFrames = Math.Max(min, max);
+            MinFrames = (int)MathF.Min(min, max);
+            MaxFrames = (int)MathF.Max(min, max);
         }
         else
         {

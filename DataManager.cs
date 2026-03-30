@@ -8,115 +8,139 @@ namespace FishMach;
 
 internal class DataManager
 {
-    private static List<MachData> machines = new();
-    private static Dictionary<Point, MachData> posMap = new();
-    private static Dictionary<int, MachData> chestMap = new();
-    private static Dictionary<string, MachData> regionMap = new();
+    public static List<MachData> Machines = new();
 
-    // 通过区域名查找玩家
-    public static MachData FindRegion(string name) => regionMap.GetValueOrDefault(name)!;
-
-    // 对外暴露只读列表
-    public static IReadOnlyList<MachData> Machines => machines;
-
-    public static bool CanSave = false; // 脏标志
+    // 缓存目录
+    private static string CacheDir => Path.Combine(MainPath, "钓鱼机缓存");
 
     // 查找钓鱼机方法
-    public static MachData FindTile(Point pos) => posMap.GetValueOrDefault(pos)!;
-    public static MachData FindChest(int index) => chestMap.GetValueOrDefault(index)!;
+    public static MachData FindTile(Point pos)
+         => Machines.FirstOrDefault(m => m.Pos == pos)!;
+    public static MachData FindChest(int index)
+        => Machines.FirstOrDefault(m => m.ChestIndex == index)!;
+    public static MachData FindRegion(string name)
+        => Machines.FirstOrDefault(m => m.RegName == name)!;
+    public static bool IsAfmRegion(string name) => name.StartsWith("afm_");
+    public static MachData? GetDataByXY(int x, int y)
+    {
+        var Regions = TShock.Regions.InAreaRegion(x, y);
+        foreach (var r in Regions)
+            if (IsAfmRegion(r.Name))
+                return DataManager.FindRegion(r.Name);
+        return null;
+    }
 
-    // 添加或更新
+    // 获取机器文件路径
+    private static string GetPath(MachData data) =>
+        Path.Combine(CacheDir, $"{data.ChestIndex}-{data.Owner}-{data.Pos.X}-{data.Pos.Y}.json");
+
+    #region 保存指定文件
+    public static void Save(MachData data)
+    {
+        if (!Directory.Exists(CacheDir))
+            Directory.CreateDirectory(CacheDir);
+
+        File.WriteAllText(GetPath(data), JsonConvert.SerializeObject(data, Formatting.Indented));
+    }
+    #endregion
+
+    #region 删除指定文件
+    public static void Del(MachData data)
+    {
+        string path = GetPath(data);
+        if (File.Exists(path))
+            File.Delete(path);
+    }
+    #endregion
+
+    #region 添加或更新机器
     public static void AddOrUpdate(MachData data)
     {
-        // 移除旧的映射（如果坐标已存在）
-        if (posMap.TryGetValue(data.Pos, out var old))
+        // 查找相同坐标的旧机器
+        var old = Machines.FirstOrDefault(m => m.Pos == data.Pos);
+        if (old != null)
         {
-            machines.Remove(old);
-            chestMap.Remove(old.ChestIndex);
-
-            if (!string.IsNullOrEmpty(old.RegName)) 
-                regionMap.Remove(old.RegName);
+            // 移除旧机器（内存列表和文件）
+            Machines.Remove(old);
+            Del(old);
         }
 
-        machines.Add(data);
-        posMap[data.Pos] = data;
-        chestMap[data.ChestIndex] = data;
-        chestMap[data.ChestIndex] = data;
-        if (!string.IsNullOrEmpty(data.RegName)) 
-            regionMap[data.RegName] = data;
-
-        CanSave = true;
+        // 添加新机器
+        Machines.Add(data);
+        Save(data);
     }
+    #endregion
 
-    // 重置清空数据
-    public static void Clear()
+    #region 读取所有文件
+    public static void LoadAll()
     {
-        machines.Clear();
-        posMap.Clear();
-        chestMap.Clear();
-        regionMap.Clear();
-        CanSave = true;
-    }
+        if (!Directory.Exists(CacheDir))
+        {
+            Clear();
+            return;
+        }
 
-    // 移除
+        var files = Directory.GetFiles(CacheDir, "*.json");
+        var newMachines = new List<MachData>();
+
+        foreach (var file in files)
+        {
+            try
+            {
+                var data = JsonConvert.DeserializeObject<MachData>(File.ReadAllText(file));
+
+                // 仅加载当前世界的机器，其他世界文件跳过不删除
+                if (data?.WorldId != Main.worldID.ToString())
+                    continue;
+
+                newMachines.Add(data);
+            }
+            catch (Exception ex)
+            {
+                TShock.Log.ConsoleError($"[自动钓鱼机] 加载文件 {file} 失败: {ex.Message}");
+            }
+        }
+
+        Machines = newMachines;
+    }
+    #endregion
+
+    #region 移除指定缓存
     public static void Remove(Point pos)
     {
-        if (posMap.TryGetValue(pos, out var data))
+        var data = Machines.FirstOrDefault(m => m.Pos == pos);
+        if (data != null)
         {
-            machines.Remove(data);
-            posMap.Remove(pos);
-            chestMap.Remove(data.ChestIndex);
-            if (!string.IsNullOrEmpty(data.RegName)) 
-                regionMap.Remove(data.RegName);
-            CanSave = true;
+            // 删除区域
+            if (!string.IsNullOrEmpty(data.RegName))
+            {
+                try
+                {
+                    TShock.Regions.DeleteRegion(data.RegName);
+                }
+                catch (Exception ex)
+                {
+                    TShock.Log.ConsoleError($"[自动钓鱼机] 删除区域失败: {ex.Message}");
+                }
+            }
+
+            Machines.Remove(data);
+            Del(data);
         }
     }
+    #endregion
 
-    // 保存数据到文件（仅在脏标志为 true 时执行）
-    public static void Save()
+    #region 清空所有
+    public static void Clear()
     {
-        if (!CanSave) return;
+        var Regions = TShock.Regions.Regions.Where(r => IsAfmRegion(r.Name)).ToList();
+        foreach (var r in Regions)
+            TShock.Regions.DeleteRegion(r.Name);
 
-        if (!Directory.Exists(MainPath))
-            Directory.CreateDirectory(MainPath);
+        Machines.Clear();
 
-        string file = CachePath(Main.worldID);
-        if (machines.Count == 0)
-        {
-            if (File.Exists(file))
-                File.Delete(file);
-
-            CanSave = false;
-            return;
-        }
-
-        File.WriteAllText(file, JsonConvert.SerializeObject(machines, Formatting.Indented));
-        CanSave = false;
+        if (Directory.Exists(CacheDir))
+            Directory.Delete(CacheDir, true);
     }
-
-    // 加载时重建映射
-    public static void Load()
-    {
-        string file = CachePath(Main.worldID);
-        if (!File.Exists(file))
-        {
-            Clear();
-            return;
-        }
-
-        try
-        {
-            var list = JsonConvert.DeserializeObject<List<MachData>>(File.ReadAllText(file));
-            machines = list ?? new List<MachData>();
-            posMap = machines.ToDictionary(m => m.Pos, m => m);
-            chestMap = machines.ToDictionary(m => m.ChestIndex, m => m);
-            regionMap = machines.ToDictionary(m => m.RegName, m => m);
-            CanSave = false;
-        }
-        catch (Exception ex)
-        {
-            TShock.Log.ConsoleError($"[自动钓鱼机] 加载缓存失败: {ex.Message}");
-            Clear();
-        }
-    }
+    #endregion
 }

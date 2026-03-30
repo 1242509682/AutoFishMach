@@ -26,6 +26,7 @@ public static class EnvManager
 
             // 颠倒海洋
             data.RolledRemixOcean = Main.remixWorld && data.HeightLevel == 1 && yPos >= Main.rockLayer && Main.rand.Next(3) == 0;
+            UpdateItemCache(data); // 物品缓存刷新只在玩家改变箱子物品时触发
             data.IntMach = false;
         }
 
@@ -36,17 +37,14 @@ public static class EnvManager
         data.HonCnt = honey;
 
         // 记录数量最多的水体
-        data.MaxLiq = Math.Max(water, Math.Max(lava, honey));
+        data.MaxLiq = (int)MathF.Max(water, (int)MathF.Max(lava, honey));
         data.LiqName = water >= data.MaxLiq ? "水" : lava >= data.MaxLiq ? "岩浆" : honey >= data.MaxLiq ? "蜂蜜" : string.Empty;
-
-        // 一次性刷新所有物品相关缓存
-        UpdateMachineCache(data);
     }
     #endregion
 
     #region 更新钓鱼机的所有物品相关缓存（渔力加成、鱼竿、鱼饵、特殊道具）仅从主箱子读取
     private static int[] lavaItems = [ItemID.LavaFishingHook, ItemID.LavaproofTackleBag, ItemID.HotlineFishingHook];
-    public static void UpdateMachineCache(MachData data)
+    public static void UpdateItemCache(MachData data)
     {
         // 重置所有缓存
         data.ExtraPower = 0;
@@ -120,6 +118,7 @@ public static class EnvManager
         plr.ZoneDesert = data.ZoneDesert;
         plr.ZoneBeach = data.ZoneBeach;
         plr.ZoneRain = data.ZoneRain;
+        plr.luck = data.luck;
 
         int hl = data.HeightLevel;
         plr.ZoneSkyHeight = hl == 0;
@@ -130,10 +129,10 @@ public static class EnvManager
     }
     #endregion
 
-    #region 统计半径内液体获取液体最多的最近坐标点（用于生成物品与NPC）
+    #region 统计半径内液体获取液体最多的最近坐标点（用于生成物品与NPC）- 优化版
     public static Point NewGetLiquid(MachData data, out int water, out int lava, out int honey)
     {
-        // 获取区域边界（若区域不存在则回退到旧方法）
+        // 获取区域边界
         var region = TShock.Regions.GetRegionByName(data.RegName);
 
         int minX = region.Area.X;
@@ -145,46 +144,68 @@ public static class EnvManager
         lava = 0;
         honey = 0;
 
-        Point WaterPos = Point.Zero, LavaPos = Point.Zero, HoneyPos = Point.Zero;
-        int WaterSq = int.MaxValue, LavaSq = int.MaxValue, HoneySq = int.MaxValue;
+        Point waterPos = Point.Zero, lavaPos = Point.Zero, honeyPos = Point.Zero;
+        int waterDist = int.MaxValue, lavaDist = int.MaxValue, honeyDist = int.MaxValue;
+
+        // 预计算中心点坐标
+        int centerX = data.Pos.X;
+        int centerY = data.Pos.Y;
 
         for (int x = minX; x <= maxX; x++)
+        {
+            int dx = x - centerX;
+            int dxSq = dx * dx; // 预计算dx平方
+
             for (int y = minY; y <= maxY; y++)
             {
                 var tile = Main.tile[x, y];
 
                 if (tile?.liquid > 0)
-                    if (tile.liquidType() == LiquidID.Water)
+                {
+                    int liquidType = tile.liquidType();
+
+                    // 预计算距离平方
+                    int dy = y - centerY;
+                    int distSq = dxSq + dy * dy;
+
+                    switch (liquidType)
                     {
-                        water++;
-                        int distSq = (x - data.Pos.X) * (x - data.Pos.X) + (y - data.Pos.Y) * (y - data.Pos.Y);
-                        if (distSq >= WaterSq) continue;
-                        WaterSq = distSq;
-                        WaterPos = new Point(x, y + 1);
+                        case LiquidID.Water:
+                            water++;
+                            if (distSq < waterDist)
+                            {
+                                waterDist = distSq;
+                                waterPos = new Point(x, y + 1);
+                            }
+                            break;
+
+                        case LiquidID.Lava:
+                            lava++;
+                            if (distSq < lavaDist)
+                            {
+                                lavaDist = distSq;
+                                lavaPos = new Point(x, y + 1);
+                            }
+                            break;
+
+                        case LiquidID.Honey:
+                            honey++;
+                            if (distSq < honeyDist)
+                            {
+                                honeyDist = distSq;
+                                honeyPos = new Point(x, y + 1);
+                            }
+                            break;
                     }
-                    else if (tile.liquidType() == LiquidID.Lava)
-                    {
-                        lava++;
-                        int distSq = (x - data.Pos.X) * (x - data.Pos.X) + (y - data.Pos.Y) * (y - data.Pos.Y);
-                        if (distSq >= LavaSq) continue;
-                        LavaSq = distSq;
-                        LavaPos = new Point(x, y + 1);
-                    }
-                    else if (tile.liquidType() == LiquidID.Honey)
-                    {
-                        honey++;
-                        int distSq = (x - data.Pos.X) * (x - data.Pos.X) + (y - data.Pos.Y) * (y - data.Pos.Y);
-                        if (distSq >= HoneySq) continue;
-                        HoneySq = distSq;
-                        HoneyPos = new Point(x, y + 1);
-                    }
+                }
             }
+        }
 
         // 按数量最多的液体返回坐标
-        int max = Math.Max(water, Math.Max(lava, honey));
-        if (max == lava) return LavaPos;
-        if (max == honey) return HoneyPos;
-        if (max == water) return WaterPos;
+        int max = (int)MathF.Max(water, (int)MathF.Max(lava, honey));
+        if (max == lava) return lavaPos;
+        if (max == honey) return honeyPos;
+        if (max == water) return waterPos;
         return Point.Zero;
     }
     #endregion
@@ -192,40 +213,49 @@ public static class EnvManager
     #region 快速检查区域内是否有任意液体达到指定阈值，并返回达标液体的数量（创建钓鱼机时使用）
     public static int QuickLiquidCheck(Point center)
     {
-        int radius = Config.Range;
-        int total = Config.NeedLiqStack;
-        int minX = Math.Max(center.X - radius, 0);
-        int maxX = Math.Min(center.X + radius, Main.maxTilesX - 1);
-        int minY = Math.Max(center.Y - radius, 0);
-        int maxY = Math.Min(center.Y + radius, Main.maxTilesY - 1);
+        int radius = Config.Range; // 62
+        int need = Config.NeedLiqStack; // 75
+        int centerX = center.X;
+        int centerY = center.Y;
 
+        int minX = (int)MathF.Max(centerX - radius, 0);
+        int maxX = (int)MathF.Min(centerX + radius, Main.maxTilesX - 1);
+        int minY = (int)MathF.Max(centerY - radius, 0);
+        int maxY = (int)MathF.Min(centerY + radius, Main.maxTilesY - 1);
+
+        // 分别追踪三种液体，一旦有任何一种达到阈值就立即返回
         int water = 0, lava = 0, honey = 0;
 
         for (int x = minX; x <= maxX; x++)
+        {
             for (int y = minY; y <= maxY; y++)
             {
                 var tile = Main.tile[x, y];
 
                 if (tile?.liquid > 0)
-                    if (tile.liquidType() == LiquidID.Water)
+                {
+                    int liquidType = tile.liquidType();
+
+                    switch (liquidType)
                     {
-                        water++;
-                        if (water < total) continue;
-                        return water;
+                        case LiquidID.Water:
+                            water++;
+                            if (water >= need) return water; // 达标立即返回
+                            break;
+
+                        case LiquidID.Lava:
+                            lava++;
+                            if (lava >= need) return lava; // 达标立即返回
+                            break;
+
+                        case LiquidID.Honey:
+                            honey++;
+                            if (honey >= need) return honey; // 达标立即返回
+                            break;
                     }
-                    else if (tile.liquidType() == LiquidID.Lava)
-                    {
-                        lava++;
-                        if (lava < total) continue;
-                        return lava;
-                    }
-                    else if (tile.liquidType() == LiquidID.Honey)
-                    {
-                        honey++;
-                        if (honey < total) continue;
-                        return honey;
-                    }
+                }
             }
+        }
 
         // 没有达标，返回0
         return 0;
@@ -233,15 +263,19 @@ public static class EnvManager
     #endregion
 
     #region 计算大气因子
-    private static float GetAtmo(int yPos)
+    private static float atmoFactor;
+    private static float atmoConst;
+    public static void InitAtmo()
     {
-        // 原版精确公式
         float num = (float)Main.maxTilesX / 4200f;
         num *= num;
-        float atmo = (float)((yPos - (60f + 10f * num)) / (Main.worldSurface / 6.0));
-        if (atmo < 0.25f) atmo = 0.25f;
-        if (atmo > 1f) atmo = 1f;
-        return atmo;
+        atmoConst = 60f + 10f * num;
+        atmoFactor = (float)(6f / Main.worldSurface); // 将除法转为乘法
+    }
+    private static float GetAtmo(int yPos)
+    {
+        float atmo = (yPos - atmoConst) * atmoFactor;
+        return (int)Math.Clamp(atmo, 0.25f, 1f);
     }
     #endregion
 }
