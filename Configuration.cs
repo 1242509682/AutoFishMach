@@ -1,7 +1,9 @@
-﻿using Newtonsoft.Json;
+﻿using System.Text.RegularExpressions;
+using Newtonsoft.Json;
 using Terraria;
 using Terraria.ID;
 using static FishMach.Plugin;
+using static Terraria.ID.ProjectileID;
 
 namespace FishMach;
 
@@ -22,55 +24,47 @@ internal class Configuration
     public bool ChestTransfer { get; set; } = true;
     [JsonProperty("闪光动画", Order = -4)]
     public bool Sparkle { get; set; } = true;
-    [JsonProperty("警告广播", Order = 3)]
-    public bool Broadcast { get; set; } = true;
-    [JsonProperty("自动整理", Order = 5)]
-    public bool AutoPut { get; set; } = true;
-    [JsonProperty("区域保护", Order = 6)]
+    [JsonProperty("区域保护", Order = -1)]
     public bool RegionBuild { get; set; } = false;
-    [JsonProperty("区域广播", Order = 7)]
+    [JsonProperty("区域广播", Order = 0)]
     public bool RegionBroadcast { get; set; } = true;
-    [JsonProperty("区域范围格数", Order = 8)]
+    [JsonProperty("区域范围", Order = 1)]
     public int Range { get; set; } = 62;
-    [JsonProperty("无人自动关闭", Order = 9)]
+    [JsonProperty("无人关闭", Order = 2)]
     public bool AutoStopWhenEmpty { get; set; } = false;
-    [JsonProperty("需要水量", Order = 10)]
+    [JsonProperty("需要水量", Order = 3)]
     public int NeedLiqStack { get; set; } = 75;
-    [JsonProperty("需要电路", Order = 11)]
+    [JsonProperty("需要电路", Order = 4)]
     public bool NeedWiring { get; set; } = true;
-    [JsonProperty("电路限频", Order = 12)]
+    [JsonProperty("电路限频", Order = 5)]
     public bool LimitFrames { get; set; } = true;
-    [JsonProperty("钓鱼间隔", Order = 13)]
+    [JsonProperty("钓鱼间隔", Order = 6)]
     public string FishInterval { get; set; } = "60,240";
-    [JsonProperty("更新缓存秒数", Order = 14)]
-    public int UpdateInterval { get; set; } = 60;
-    [JsonProperty("靠近更新范围", Order = 15)]
-    public int UpdateTileRange { get; set; } = 10;
-    [JsonProperty("宝匣药水加成", Order = 17)]
-    public int CratePotionBonus { get; set; } = 15;
-    [JsonProperty("钓鱼药水加成", Order = 18)]
-    public int FishingPotionPower { get; set; } = 20;
-    [JsonProperty("鱼饵桶加成", Order = 19)]
-    public int ChumBucketPower { get; set; } = 10;
-    [JsonProperty("允许钓出怪物", Order = 20)]
-    public bool EnableCustomNPC { get; set; } = true;
-    [JsonProperty("禁钓已有怪物", Order = 21)]
-    public bool SoloCustomMonster { get; set; } = true;
-    [JsonProperty("禁钓模式(0不同类/1仅单挑)", Order = 22)]
-    public int SoloMode { get; set; } = 0;
-    [JsonProperty("永久渔力加成物品", Order = 23)]
-    public Dictionary<int, int> CustomPowerItems { get; set; } = new();
-    [JsonProperty("区域BUFF", Order = 24)]
+    [JsonProperty("环境范围", Order = 7)]
+    public int ZoneRange { get; set; } = 10;
+    [JsonProperty("区域BUFF", Order = 8)]
     public bool RegionBuffEnabled { get; set; } = true;
-    [JsonProperty("区域Buff消耗物品", Order = 25)]
+    [JsonProperty("宝匣药水加成", Order = 9)]
+    public int CratePotionBonus { get; set; } = 15;
+    [JsonProperty("钓鱼药水加成", Order = 10)]
+    public int FishingPotionPower { get; set; } = 20;
+    [JsonProperty("鱼饵桶加成", Order = 11)]
+    public int ChumBucketPower { get; set; } = 10;
+    [JsonProperty("允许钓出怪物", Order = 12)]
+    public bool EnableCustomNPC { get; set; } = true;
+    [JsonProperty("禁钓已有怪物", Order = 13)]
+    public bool SoloCustomMonster { get; set; } = true;
+    [JsonProperty("禁钓模式(0不同类/1仅单挑)", Order = 14)]
+    public int SoloMode { get; set; } = 0;
+    [JsonProperty("永久渔力加成物品", Order = 15)]
+    public Dictionary<int, int> CustomPowerItems { get; set; } = new();
+    [JsonProperty("区域Buff消耗物品", Order = 16)]
     public List<CustomUsedItems> CustomUsedItem { get; set; } = new();
-    [JsonProperty("自定义渔获表", Order = 26)]
+    [JsonProperty("自定义渔获表", Order = 17)]
     public List<CustomFishRule> CustomFishes { get; set; } = new();
 
-    [JsonIgnore]
-    public int MinFrames { get; private set; } = 60;
-    [JsonIgnore]
-    public int MaxFrames { get; private set; } = 60;
+    [JsonIgnore] public int MinFrames { get; private set; } = 60;
+    [JsonIgnore] public int MaxFrames { get; private set; } = 60;
     #endregion
 
     #region 预设参数方法
@@ -190,11 +184,36 @@ internal class Configuration
         }
         else
         {
-            string jsonContent = File.ReadAllText(Paths);
-            var config = JsonConvert.DeserializeObject<Configuration>(jsonContent)!;
-            config.ParseFrames(); // 解析配置中的字符串
-            return config;
+            try
+            {
+                string json = File.ReadAllText(Paths);
+                var config = JsonConvert.DeserializeObject<Configuration>(json)!;
+                config.ParseFrames(); // 解析配置中的字符串
+                return config;
+            }
+            catch (JsonReaderException ex)
+            {
+                string json = File.ReadAllText(Paths);
+                string[] lines = json.Split('\n');
+                int line = ex.LineNumber;
+                string text = lines[line - 2].Trim();
+                throw new Exception($"位置: 第 {line - 1} 行\n" +
+                                    $"内容: {text ?? string.Empty}\n" +
+                                    $"路径: {FormatPath(ex.Path ?? string.Empty)}", ex);
+            }
         }
+    }
+    public static string FormatPath(string path)
+    {
+        if (string.IsNullOrEmpty(path))
+            return path;
+
+        // 使用正则表达式匹配 "[数字]"
+        return Regex.Replace(path,@"\[(\d+)\]",match =>
+        {
+                int index = int.Parse(match.Groups[1].Value);
+                return $":第{index + 1}项";
+        });
     }
     #endregion
 

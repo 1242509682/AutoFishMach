@@ -2,57 +2,22 @@
 using Terraria;
 using Terraria.ID;
 using TShockAPI;
+using static FishMach.Utils;
 using static FishMach.Plugin;
+using static FishMach.DataManager;
 
 namespace FishMach;
 
 public static class EnvManager
 {
-    #region 刷新机器的环境缓存（无需玩家对象）
-    public static void RefreshEnv(MachData data)
-    {
-        // 初始化设置一次,其他时候不设置
-        if (data.IntMach)
-        {
-            // 高度等级
-            int yPos = data.Pos.Y;
-            if (Main.remixWorld)
-                data.HeightLevel = yPos < Main.worldSurface * 0.5 ? 0 : yPos < Main.worldSurface ? 1 : yPos < Main.rockLayer ? 3 : yPos < Main.maxTilesY - 300 ? 2 : 4;
-            else
-                data.HeightLevel = yPos < Main.worldSurface * 0.5 ? 0 : yPos < Main.worldSurface ? 1 : yPos < Main.rockLayer ? 2 : yPos < Main.maxTilesY - 300 ? 3 : 4;
-
-            // 大气因子
-            data.atmo = GetAtmo(yPos);
-
-            // 颠倒海洋
-            data.RolledRemixOcean = Main.remixWorld && data.HeightLevel == 1 && yPos >= Main.rockLayer && Main.rand.Next(3) == 0;
-            UpdateItemCache(data); // 物品缓存刷新只在玩家改变箱子物品时触发
-            data.IntMach = false;
-        }
-
-        // 水体统计
-        data.LiquidPos = NewGetLiquid(data, out int water, out int lava, out int honey);
-        data.WatCnt = water;
-        data.LavCnt = lava;
-        data.HonCnt = honey;
-
-        // 记录数量最多的水体
-        data.MaxLiq = (int)MathF.Max(water, (int)MathF.Max(lava, honey));
-        data.LiqName = water >= data.MaxLiq ? "水" : lava >= data.MaxLiq ? "岩浆" : honey >= data.MaxLiq ? "蜂蜜" : string.Empty;
-    }
-    #endregion
-
     #region 更新钓鱼机的所有物品相关缓存（渔力加成、鱼竿、鱼饵、特殊道具）仅从主箱子读取
     private static int[] lavaItems = [ItemID.LavaFishingHook, ItemID.LavaproofTackleBag, ItemID.HotlineFishingHook];
-    public static void UpdateItemCache(MachData data)
+    public static void SyncItem(MachData data)
     {
-        // 重置所有缓存
         data.ExtraPower = 0;
         data.CanFishInLava = false;
         data.HasTackle = false;
 
-        // 统一：-1 = 未缓存/需查找，-2 = 确认无物品
-        // 先设为 -1，扫描后会根据结果改为实际槽位或 -2
         data.RodSlot = -1;
         data.BaitSlot = -1;
         data.CratePotionSlot = -1;
@@ -60,42 +25,45 @@ public static class EnvManager
         data.ChumBucketSlot = -1;
 
         var chest = Main.chest[data.ChestIndex];
-        for (int s = 0; s < chest.item.Length; s++)
+        if (chest == null) return;
+        var items = chest.item.AsSpan();
+        for (int i = 0; i < items.Length; i++)
         {
-            var item = chest.item[s];
+            // 只检查不修改 不需要用 ref
+            Item item = items[i];
             if (item == null || item.IsAir) continue;
 
-            // 鱼竿缓存
             if (data.RodSlot == -1 && item.fishingPole > 0)
-                data.RodSlot = s;
+                data.RodSlot = i;
 
-            // 鱼饵缓存
             if (data.BaitSlot == -1 && item.bait > 0)
-                data.BaitSlot = s;
+                data.BaitSlot = i;
 
-            // 宝匣药水缓存
             if (data.CratePotionSlot == -1 && item.type == ItemID.CratePotion)
-                data.CratePotionSlot = s;
+                data.CratePotionSlot = i;
 
-            // 钓鱼药水缓存
             if (data.FishingPotionSlot == -1 && item.type == ItemID.FishingPotion)
-                data.FishingPotionSlot = s;
+                data.FishingPotionSlot = i;
 
-            // 鱼饵桶缓存
             if (data.ChumBucketSlot == -1 && item.type == ItemID.ChumBucket)
-                data.ChumBucketSlot = s;
+                data.ChumBucketSlot = i;
 
-            // 渔力加成道具（排除消耗型药水）
             if (item.type != ItemID.FishingPotion &&
                 item.type != ItemID.CratePotion &&
                 Config.CustomPowerItems.TryGetValue(item.type, out int power))
                 data.ExtraPower += power;
 
-            // 熔岩钓鱼道具
-            if (lavaItems.Contains(item.type))
-                data.CanFishInLava = true;
+            bool isLava = false;
+            for (int j = 0; j < lavaItems.Length; j++)
+            {
+                if (lavaItems[j] == item.type)
+                {
+                    isLava = true;
+                    break;
+                }
+            }
+            if (isLava) data.CanFishInLava = true;
 
-            // 钓具箱/渔夫渔具袋
             if (item.type == ItemID.TackleBox ||
                 item.type == ItemID.AnglerTackleBag ||
                 item.type == ItemID.LavaproofTackleBag)
@@ -104,10 +72,378 @@ public static class EnvManager
     }
     #endregion
 
-    #region 模拟玩家并设置位置，用于环境计算
-    public static void SetupTempPlayer(MachData data, Player? target = null)
+    #region 快速检查液体坐标（含快速水体大小检测）
+    /// <summary>
+    /// 快速检查当前锚点所在水体是否仍满足液体需求（轻量级，避免每次全量统计）
+    /// 返回 true 表示液体不足，需要全量统计；false 表示液体充足，无需更新。
+    /// </summary>
+    public static bool FindLiq(MachData data)
     {
-        var plr = target ?? TempPlayer;
+        int x = data.LiqPos.X, y = data.LiqPos.Y;
+
+        // 1. 边界与基础有效性
+        if (x <= 0 || x >= Main.maxTilesX || y <= 0 || y >= Main.maxTilesY) return true;
+
+        var tile = Main.tile[x, y];
+        int curr = tile.liquidType();
+        int target = data.LiqType;
+
+        // 锚点位置没有液体 或者 有实体块（防止从固体中钓鱼）
+        if (tile.liquid == 0 || WorldGen.SolidTile(tile)) return true;
+
+        // 液体类型不对
+        if (target != -1 && curr != target) return true;
+
+        // 锚点液体少于1格（液体值 < 16 代表不足一格）
+        if (tile.liquid < 16) return true;
+
+        // 2. 获取区域边界
+        var region = TShock.Regions.GetRegionByName(data.RegName);
+        if (region == null) return true;
+
+        int minX = region.Area.X, maxX = region.Area.X + region.Area.Width - 1;
+        int minY = region.Area.Y, maxY = region.Area.Y + region.Area.Height - 1;
+
+        // 检查锚点是否在水面下1格（若深度异常则重新统计）
+        int top = y;
+        while (top > minY)
+        {
+            var upTile = Main.tile[x, top - 1];
+            if (upTile.liquid == 0 || WorldGen.SolidTile(x, top - 1))
+                break;
+            top--;
+        }
+        if (Math.Abs(y - top) != 1) return true;
+
+        int need = Config.NeedLiqStack;
+        if (need <= 0)
+            return false;
+
+        // 水平扩展宽度
+        int left = x, right = x;
+        while (left > minX && Main.tile[left - 1, y].liquid > 0 && !WorldGen.SolidTile(left - 1, y))
+            left--;
+        while (right < maxX && Main.tile[right + 1, y].liquid > 0 && !WorldGen.SolidTile(right + 1, y))
+            right++;
+        if (right - left + 1 < 3)
+            return true;
+
+        // 向下统计液体，达到 need 即停止
+        int count = 0;
+        int maxDepth = Math.Min(maxY - y + 1, need);
+        for (int xi = left; xi <= right && count < need; xi++)
+        {
+            int yi = y;
+            for (int scanned = 0; scanned < maxDepth && yi <= maxY; scanned++, yi++)
+            {
+                var bt = Main.tile[xi, yi];
+                if (bt.liquid == 0 || WorldGen.SolidTile(bt))
+                    break;
+                if (++count >= need)
+                    return false; // 已足够
+            }
+        }
+
+        return true; // 统计不足，需要更新
+    }
+    #endregion
+
+    #region 统计液体
+    public static void SyncLiquid(MachData data)
+    {
+        // 快速检查：若当前液体仍然充足，则直接返回
+        if (!FindLiq(data))
+            return;
+
+        var region = TShock.Regions.GetRegionByName(data.RegName);
+        if (region == null)
+        {
+            data.MaxLiq = 0;
+            return;
+        }
+
+        int minX = region.Area.X, maxX = region.Area.X + region.Area.Width - 1;
+        int minY = region.Area.Y, maxY = region.Area.Y + region.Area.Height - 1;
+
+        // 统计变量
+        int water = 0, lava = 0, honey = 0;
+        // 为每种液体分别记录边界
+        int waterMinY = int.MaxValue, waterMinX = int.MaxValue, waterMaxX = int.MinValue;
+        int lavaMinY = int.MaxValue, lavaMinX = int.MaxValue, lavaMaxX = int.MinValue;
+        int honeyMinY = int.MaxValue, honeyMinX = int.MaxValue, honeyMaxX = int.MinValue;
+
+        // 一次遍历统计所有液体
+        for (int x = minX; x <= maxX; x++)
+        {
+            for (int y = minY; y <= maxY; y++)
+            {
+                var tile = Main.tile[x, y];
+                if (tile.liquid == 0 || WorldGen.SolidTile(tile)) continue;
+
+                int type = tile.liquidType();
+                switch (type)
+                {
+                    case LiquidID.Water:
+                        water++;
+                        if (y < waterMinY) waterMinY = y;
+                        if (x < waterMinX) waterMinX = x;
+                        if (x > waterMaxX) waterMaxX = x;
+                        break;
+                    case LiquidID.Lava:
+                        lava++;
+                        if (y < lavaMinY) lavaMinY = y;
+                        if (x < lavaMinX) lavaMinX = x;
+                        if (x > lavaMaxX) lavaMaxX = x;
+                        break;
+                    case LiquidID.Honey:
+                        honey++;
+                        if (y < honeyMinY) honeyMinY = y;
+                        if (x < honeyMinX) honeyMinX = x;
+                        if (x > honeyMaxX) honeyMaxX = x;
+                        break;
+                }
+            }
+        }
+
+        // 确定主要液体类型
+        int maxLiq = Math.Max(water, Math.Max(lava, honey));
+        if (maxLiq == 0)
+        {
+            data.MaxLiq = 0;
+            data.LiqType = -1;
+            data.LiqName = "无";
+            return;
+        }
+
+        // 选择主要液体对应的边界
+        int liqType;
+        int count;
+        int minYval, minXval, maxXval;
+        if (maxLiq == honey)
+        {
+            liqType = LiquidID.Honey;
+            count = honey;
+            minYval = honeyMinY;
+            minXval = honeyMinX;
+            maxXval = honeyMaxX;
+        }
+        else if (maxLiq == lava)
+        {
+            liqType = LiquidID.Lava;
+            count = lava;
+            minYval = lavaMinY;
+            minXval = lavaMinX;
+            maxXval = lavaMaxX;
+        }
+        else
+        {
+            liqType = LiquidID.Water;
+            count = water;
+            minYval = waterMinY;
+            minXval = waterMinX;
+            maxXval = waterMaxX;
+        }
+
+        // 计算锚点（水面中间位置，下移一格）
+        int midX = (minXval + maxXval) / 2;
+        Point anchor = new Point(midX, minYval + 1);
+
+        // 检查锚点是否可用（深度正确且上方无固体）
+        bool depthOk = (anchor.Y - minYval == 1) || (count == 1 && anchor.Y == minYval);
+        bool topSolid = anchor.Y > 0 && WorldGen.SolidTile(Main.tile[anchor.X, anchor.Y - 1]);
+
+        if (!depthOk || topSolid)
+        {
+            // 如果锚点不可用，则回退到箱子位置（并标记液体不足）
+            data.MaxLiq = 0;
+            data.LiqType = -1;
+            data.LiqName = "无";
+            data.LiqPos = data.Pos;
+            data.LiquidDead = true;
+            if(data.RegionPlayers.Count > 0)
+                foreach (var plr in data.RegionPlayers)
+                    plr.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 修正锚点[c/FF6552:失败]"), color);
+            return;
+        }
+
+        // 更新机器数据
+        data.WaterCount = water;
+        data.LavaCount = lava;
+        data.HoneyCount = honey;
+        data.MaxLiq = maxLiq;
+        data.LiqType = liqType;
+        data.LiqName = liqType == LiquidID.Honey ? "蜂蜜" :
+                       liqType == LiquidID.Lava ? "岩浆" : "水";
+        data.LiqPos = anchor;
+    }
+    #endregion
+
+    #region 验证同步方法（验证钓鱼机数据是否有效，检查玩家距离）
+    private static bool ValidateSync(TSPlayer plr, MachData data, out string Msg)
+    {
+        Msg = string.Empty;
+
+        // 1. 检查箱子是否存在且位置正确
+        var chest = Main.chest[data.ChestIndex];
+        if (chest == null || chest.x != data.Pos.X || chest.y != data.Pos.Y)
+        {
+            // 箱子已不存在或移动，删除区域和机器数据
+            TShock.Regions.DeleteRegion(data.RegName);
+            DataManager.Remove(data.Pos);
+            Msg = $"钓鱼机 [c/ED756F:{data.ChestIndex}] 已不存在，已删除无效区域。";
+            return false;
+        }
+
+        // 2. 检查区域是否存在，若不存在则尝试重建
+        var region = TShock.Regions.GetRegionByName(data.RegName);
+        if (region == null)
+        {
+            int left, top, w, h;
+            if (IsOverlap(data.Pos, data.WorldId, "重建", out left, out top, out w, out h, data.RegName))
+            {
+                Msg = $"钓鱼机 [c/ED756F:{data.ChestIndex}] 区域重建失败，区域重叠。";
+                return false;
+            }
+
+            if (!TShock.Regions.AddRegion(left, top, w, h, data.RegName, data.Owner, data.WorldId, 0))
+            {
+                Msg = $"钓鱼机 [c/ED756F:{data.ChestIndex}] 区域重建失败。";
+                return false;
+            }
+            TShock.Regions.SetRegionState(data.RegName, Config.RegionBuild);
+        }
+
+        // 3. 距离检查（使用平方距离避免 sqrt）
+        int dx = plr.TileX - data.Pos.X;
+        int dy = plr.TileY - data.Pos.Y;
+        int rangeSq = Config.ZoneRange * Config.ZoneRange;
+        if (dx * dx + dy * dy > rangeSq)
+        {
+            Msg = $"距离钓鱼机过远，需在 {Config.ZoneRange} 格内，请靠近后再同步。";
+            return false;
+        }
+
+        return true;
+    }
+    #endregion
+
+    #region 使用Sync指令立即同步（需在区域且距离足够近）
+    public static bool SyncForCmd(TSPlayer plr)
+    {
+        // 检查玩家是否在钓鱼机区域内
+        if (plr.CurrentRegion == null || !IsAfmRegion(plr.CurrentRegion.Name))
+        {
+            return false;
+        }
+
+        var data = DataManager.FindRegion(plr.CurrentRegion.Name);
+        if (data == null)
+        {
+            TShock.Regions.DeleteRegion(plr.CurrentRegion.Name);
+            plr.SendMessage(TextGradient($"数据丢失，已删除无效区域 {plr.CurrentRegion.Name}"), color);
+            return false;
+        }
+
+        if (ValidateSync(plr, data, out string error))
+        {
+            UpdateData(data, plr);
+            plr.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 数据已同步"), color);
+            return true;
+        }
+        else
+        {
+            // 距离不足时设置同步标记，等待箱子打开
+            if (error.Contains("距离"))
+            {
+                plr.SetData("sync", true);
+                plr.SendMessage(TextGradient("请打开要同步数据的钓鱼机箱子..."), color);
+            }
+            else
+            {
+                plr.SendMessage(TextGradient(error), color);
+            }
+            return false;
+        }
+    }
+    #endregion
+
+    #region 需要打开箱子来同步，同时检查区域、箱子、数据完整性
+    public static void SyncForChestOpen(TSPlayer plr, MachData? data, Point pos)
+    {
+        if (data == null)
+        {
+            // 没有钓鱼机数据，检查当前玩家所在区域是否为钓鱼机区域且数据丢失
+            var region = plr.CurrentRegion;
+            if (region != null && IsAfmRegion(region.Name) && FindRegion(region.Name) == null)
+            {
+                TShock.Regions.DeleteRegion(region.Name);
+                plr.SendMessage(TextGradient($"数据丢失，已删除无效区域 {region.Name}"), color);
+            }
+            else
+            {
+                plr.SendErrorMessage("该位置没有钓鱼机");
+            }
+            return;
+        }
+
+        if (ValidateSync(plr, data, out string error))
+        {
+            UpdateData(data, plr);
+            plr.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 数据已同步"), color);
+            plr.SendMessage(TextGradient($"如果环境错误,请[c/75D1FF:打开一次]钓鱼箱"), color);
+        }
+        else
+        {
+            plr.SendMessage(TextGradient(error), color);
+        }
+    }
+    #endregion
+
+    #region 更新缓存环境（需距离检查）
+    public static void SyncZone(TSPlayer plr, MachData data)
+    {
+        // 距离检查
+        int dx = plr.TileX - data.Pos.X;
+        int dy = plr.TileY - data.Pos.Y;
+        int rangeSq = Config.ZoneRange * Config.ZoneRange;
+        if (dx * dx + dy * dy > rangeSq) return;
+
+        if (data.ZoneCorrupt != plr.TPlayer.ZoneCorrupt)
+            data.ZoneCorrupt = plr.TPlayer.ZoneCorrupt;
+
+        if (data.ZoneCrimson != plr.TPlayer.ZoneCrimson)
+            data.ZoneCrimson = plr.TPlayer.ZoneCrimson;
+
+        if (data.ZoneJungle != plr.TPlayer.ZoneJungle)
+            data.ZoneJungle = plr.TPlayer.ZoneJungle;
+
+        if (data.ZoneSnow != plr.TPlayer.ZoneSnow)
+            data.ZoneSnow = plr.TPlayer.ZoneSnow;
+
+        if (data.ZoneHallow != plr.TPlayer.ZoneHallow)
+            data.ZoneHallow = plr.TPlayer.ZoneHallow;
+
+        if (data.ZoneDesert != plr.TPlayer.ZoneDesert)
+            data.ZoneDesert = plr.TPlayer.ZoneDesert;
+
+        if (data.ZoneBeach != plr.TPlayer.ZoneBeach)
+            data.ZoneBeach = plr.TPlayer.ZoneBeach;
+
+        if (data.ZoneDungeon != plr.TPlayer.ZoneDungeon)
+            data.ZoneDungeon = plr.TPlayer.ZoneDungeon;
+
+        if (data.ZoneRain != plr.TPlayer.ZoneRain)
+            data.ZoneRain = plr.TPlayer.ZoneRain;
+
+        if (data.luck != plr.TPlayer.luck)
+            data.luck = plr.TPlayer.luck;
+    }
+    #endregion
+
+    #region 将缓存的环境赋值给假玩家
+    public static void SetupTempPlayer(MachData data)
+    {
+        var plr = TempPlayer;
         plr.position = new Vector2(data.Pos.X * 16, data.Pos.Y * 16);
         plr.UpdateBiomes();
         plr.ZoneCorrupt = data.ZoneCorrupt;
@@ -129,99 +465,17 @@ public static class EnvManager
     }
     #endregion
 
-    #region 统计半径内液体获取液体最多的最近坐标点（用于生成物品与NPC）- 优化版
-    public static Point NewGetLiquid(MachData data, out int water, out int lava, out int honey)
-    {
-        // 获取区域边界
-        var region = TShock.Regions.GetRegionByName(data.RegName);
-
-        int minX = region.Area.X;
-        int maxX = region.Area.X + region.Area.Width - 1;
-        int minY = region.Area.Y;
-        int maxY = region.Area.Y + region.Area.Height - 1;
-
-        water = 0;
-        lava = 0;
-        honey = 0;
-
-        Point waterPos = Point.Zero, lavaPos = Point.Zero, honeyPos = Point.Zero;
-        int waterDist = int.MaxValue, lavaDist = int.MaxValue, honeyDist = int.MaxValue;
-
-        // 预计算中心点坐标
-        int centerX = data.Pos.X;
-        int centerY = data.Pos.Y;
-
-        for (int x = minX; x <= maxX; x++)
-        {
-            int dx = x - centerX;
-            int dxSq = dx * dx; // 预计算dx平方
-
-            for (int y = minY; y <= maxY; y++)
-            {
-                var tile = Main.tile[x, y];
-
-                if (tile?.liquid > 0)
-                {
-                    int liquidType = tile.liquidType();
-
-                    // 预计算距离平方
-                    int dy = y - centerY;
-                    int distSq = dxSq + dy * dy;
-
-                    switch (liquidType)
-                    {
-                        case LiquidID.Water:
-                            water++;
-                            if (distSq < waterDist)
-                            {
-                                waterDist = distSq;
-                                waterPos = new Point(x, y + 1);
-                            }
-                            break;
-
-                        case LiquidID.Lava:
-                            lava++;
-                            if (distSq < lavaDist)
-                            {
-                                lavaDist = distSq;
-                                lavaPos = new Point(x, y + 1);
-                            }
-                            break;
-
-                        case LiquidID.Honey:
-                            honey++;
-                            if (distSq < honeyDist)
-                            {
-                                honeyDist = distSq;
-                                honeyPos = new Point(x, y + 1);
-                            }
-                            break;
-                    }
-                }
-            }
-        }
-
-        // 按数量最多的液体返回坐标
-        int max = (int)MathF.Max(water, (int)MathF.Max(lava, honey));
-        if (max == lava) return lavaPos;
-        if (max == honey) return honeyPos;
-        if (max == water) return waterPos;
-        return Point.Zero;
-    }
-    #endregion
-
     #region 快速检查区域内是否有任意液体达到指定阈值，并返回达标液体的数量（创建钓鱼机时使用）
     public static int QuickLiquidCheck(Point center)
     {
         int radius = Config.Range; // 62
         int need = Config.NeedLiqStack; // 75
-        int centerX = center.X;
-        int centerY = center.Y;
+        int cx = center.X, cy = center.Y;
 
-        int minX = (int)MathF.Max(centerX - radius, 0);
-        int maxX = (int)MathF.Min(centerX + radius, Main.maxTilesX - 1);
-        int minY = (int)MathF.Max(centerY - radius, 0);
-        int maxY = (int)MathF.Min(centerY + radius, Main.maxTilesY - 1);
+        int minX = (int)MathF.Max(cx - radius, 0);
+        int maxX = (int)MathF.Min(cx + radius, Main.maxTilesX - 1);
+        int minY = (int)MathF.Max(cy - radius, 0);
+        int maxY = (int)MathF.Min(cy + radius, Main.maxTilesY - 1);
 
         // 分别追踪三种液体，一旦有任何一种达到阈值就立即返回
         int water = 0, lava = 0, honey = 0;
@@ -230,27 +484,22 @@ public static class EnvManager
         {
             for (int y = minY; y <= maxY; y++)
             {
-                var tile = Main.tile[x, y];
+                ITile tile = Main.tile[x, y];
+                byte liq = tile.liquid;
 
-                if (tile?.liquid > 0)
+                if (liq > 0)
                 {
-                    int liquidType = tile.liquidType();
-
-                    switch (liquidType)
+                    int type = tile.liquidType();
+                    switch (type)
                     {
                         case LiquidID.Water:
-                            water++;
-                            if (water >= need) return water; // 达标立即返回
+                            if (++water >= need) return water;
                             break;
-
                         case LiquidID.Lava:
-                            lava++;
-                            if (lava >= need) return lava; // 达标立即返回
+                            if (++lava >= need) return lava;
                             break;
-
                         case LiquidID.Honey:
-                            honey++;
-                            if (honey >= need) return honey; // 达标立即返回
+                            if (++honey >= need) return honey;
                             break;
                     }
                 }
@@ -272,10 +521,11 @@ public static class EnvManager
         atmoConst = 60f + 10f * num;
         atmoFactor = (float)(6f / Main.worldSurface); // 将除法转为乘法
     }
-    private static float GetAtmo(int yPos)
+    public static float GetAtmo(int yPos)
     {
         float atmo = (yPos - atmoConst) * atmoFactor;
-        return (int)Math.Clamp(atmo, 0.25f, 1f);
+        return Math.Clamp(atmo, 0.25f, 1f);
     }
     #endregion
+
 }

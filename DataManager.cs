@@ -8,27 +8,24 @@ namespace FishMach;
 
 internal class DataManager
 {
-    public static List<MachData> Machines = new();
 
     // 缓存目录
     private static string CacheDir => Path.Combine(MainPath, "钓鱼机缓存");
 
     // 查找钓鱼机方法
-    public static MachData FindTile(Point pos)
-         => Machines.FirstOrDefault(m => m.Pos == pos)!;
-    public static MachData FindChest(int index)
-        => Machines.FirstOrDefault(m => m.ChestIndex == index)!;
-    public static MachData FindRegion(string name)
-        => Machines.FirstOrDefault(m => m.RegName == name)!;
+    public static List<MachData> Machines = new();
+    public static Dictionary<Point, MachData> MachByPos = new();
+    public static Dictionary<int, MachData> MachByChest = new();
+    public static Dictionary<string, MachData> MachByRegName = new();
+
+    public static MachData? FindTile(Point pos)
+        => MachByPos.TryGetValue(pos, out var data) ? data : null;
+    public static MachData? FindChest(int idx)
+        => MachByChest.TryGetValue(idx, out var data) ? data : null;
+    public static MachData? FindRegion(string name)
+        => MachByRegName.TryGetValue(name, out var data) ? data : null;
+
     public static bool IsAfmRegion(string name) => name.StartsWith("afm_");
-    public static MachData? GetDataByXY(int x, int y)
-    {
-        var Regions = TShock.Regions.InAreaRegion(x, y);
-        foreach (var r in Regions)
-            if (IsAfmRegion(r.Name))
-                return DataManager.FindRegion(r.Name);
-        return null;
-    }
 
     // 获取机器文件路径
     private static string GetPath(MachData data) =>
@@ -54,19 +51,27 @@ internal class DataManager
     #endregion
 
     #region 添加或更新机器
-    public static void AddOrUpdate(MachData data)
+    public static void AddOrSave(MachData data)
     {
-        // 查找相同坐标的旧机器
-        var old = Machines.FirstOrDefault(m => m.Pos == data.Pos);
-        if (old != null)
-        {
-            // 移除旧机器（内存列表和文件）
-            Machines.Remove(old);
-            Del(old);
-        }
+        // 移除旧映射（先查找旧位置）
+        if (MachByPos.ContainsKey(data.Pos))
+            MachByPos.Remove(data.Pos);
+        // 移除旧箱子映射
+        var oldChest = MachByChest.FirstOrDefault(x => x.Value == data).Key;
+        if (oldChest != 0)
+            MachByChest.Remove(oldChest);
+        // 移除旧区域映射
+        var oldRegion = MachByRegName.FirstOrDefault(x => x.Value == data).Key;
+        if (oldRegion != null)
+            MachByRegName.Remove(oldRegion);
 
-        // 添加新机器
+        // 添加新映射
         Machines.Add(data);
+        MachByPos[data.Pos] = data;
+        if (data.ChestIndex != -1)
+            MachByChest[data.ChestIndex] = data;
+        if (!string.IsNullOrEmpty(data.RegName))
+            MachByRegName[data.RegName] = data;
         Save(data);
     }
     #endregion
@@ -108,36 +113,48 @@ internal class DataManager
     #region 移除指定缓存
     public static void Remove(Point pos)
     {
-        var data = Machines.FirstOrDefault(m => m.Pos == pos);
-        if (data != null)
-        {
-            // 删除区域
-            if (!string.IsNullOrEmpty(data.RegName))
-            {
-                try
-                {
-                    TShock.Regions.DeleteRegion(data.RegName);
-                }
-                catch (Exception ex)
-                {
-                    TShock.Log.ConsoleError($"[自动钓鱼机] 删除区域失败: {ex.Message}");
-                }
-            }
+        var data = FindTile(pos);
+        if (data == null) return;
 
-            Machines.Remove(data);
-            Del(data);
+        MachByPos.Remove(pos);
+
+        if (!string.IsNullOrEmpty(data.RegName))
+        {
+            try { TShock.Regions.DeleteRegion(data.RegName); }
+            catch (Exception ex)
+            {
+                TShock.Log.ConsoleError($"[自动钓鱼机] 删除区域 {data.RegName} 失败: {ex.Message}");
+            }
         }
+
+        if (data.ChestIndex != -1)
+            MachByChest.Remove(data.ChestIndex);
+        if (!string.IsNullOrEmpty(data.RegName))
+            MachByRegName.Remove(data.RegName);
+
+        Machines.Remove(data);
+        Del(data);
     }
     #endregion
 
     #region 清空所有
     public static void Clear()
     {
+        // 清除所有区域
         var Regions = TShock.Regions.Regions.Where(r => IsAfmRegion(r.Name)).ToList();
         foreach (var r in Regions)
-            TShock.Regions.DeleteRegion(r.Name);
+        {
+            try { TShock.Regions.DeleteRegion(r.Name); }
+            catch (Exception ex)
+            {
+                TShock.Log.ConsoleError($"[自动钓鱼机] 删除区域 {r.Name} 失败: {ex.Message}");
+            }
+        }
 
         Machines.Clear();
+        MachByPos.Clear();
+        MachByChest.Clear();
+        MachByRegName.Clear();
 
         if (Directory.Exists(CacheDir))
             Directory.Delete(CacheDir, true);
