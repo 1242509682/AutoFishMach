@@ -77,34 +77,26 @@ public static class EnvManager
     /// 快速检查当前锚点所在水体是否仍满足液体需求（轻量级，避免每次全量统计）
     /// 返回 true 表示液体不足，需要全量统计；false 表示液体充足，无需更新。
     /// </summary>
-    public static bool FindLiq(MachData data)
+    public static bool CheckLiq(MachData data)
     {
         int x = data.LiqPos.X, y = data.LiqPos.Y;
-
-        // 1. 边界与基础有效性
-        if (x <= 0 || x >= Main.maxTilesX || y <= 0 || y >= Main.maxTilesY) return true;
+        if (x <= 0 || x >= Main.maxTilesX || y <= 0 || y >= Main.maxTilesY) return false;
 
         var tile = Main.tile[x, y];
         int curr = tile.liquidType();
         int target = data.LiqType;
 
-        // 锚点位置没有液体 或者 有实体块（防止从固体中钓鱼）
-        if (tile.liquid == 0 || WorldGen.SolidTile(tile)) return true;
+        if (tile.liquid == 0 || WorldGen.SolidTile(tile)) return false;
+        if (target != -1 && curr != target) return false;
+        if (tile.liquid < 16) return false;
 
-        // 液体类型不对
-        if (target != -1 && curr != target) return true;
-
-        // 锚点液体少于1格（液体值 < 16 代表不足一格）
-        if (tile.liquid < 16) return true;
-
-        // 2. 获取区域边界
         var region = TShock.Regions.GetRegionByName(data.RegName);
-        if (region == null) return true;
+        if (region == null) return false;
 
         int minX = region.Area.X, maxX = region.Area.X + region.Area.Width - 1;
         int minY = region.Area.Y, maxY = region.Area.Y + region.Area.Height - 1;
 
-        // 检查锚点是否在水面下1格（若深度异常则重新统计）
+        // 深度检查（保留）
         int top = y;
         while (top > minY)
         {
@@ -113,22 +105,18 @@ public static class EnvManager
                 break;
             top--;
         }
-        if (Math.Abs(y - top) != 1) return true;
+        if (Math.Abs(y - top) != 1 && !(y == top)) return false;
 
         int need = Config.NeedLiqStack;
-        if (need <= 0)
-            return false;
+        if (need <= 0) return true;
 
-        // 水平扩展宽度
         int left = x, right = x;
         while (left > minX && Main.tile[left - 1, y].liquid > 0 && !WorldGen.SolidTile(left - 1, y))
             left--;
         while (right < maxX && Main.tile[right + 1, y].liquid > 0 && !WorldGen.SolidTile(right + 1, y))
             right++;
-        if (right - left + 1 < 3)
-            return true;
+        if (right - left + 1 < 3) return false;
 
-        // 向下统计液体，达到 need 即停止
         int count = 0;
         int maxDepth = Math.Min(maxY - y + 1, need);
         for (int xi = left; xi <= right && count < need; xi++)
@@ -140,19 +128,17 @@ public static class EnvManager
                 if (bt.liquid == 0 || WorldGen.SolidTile(bt))
                     break;
                 if (++count >= need)
-                    return false; // 已足够
+                    return true;
             }
         }
-
-        return true; // 统计不足，需要更新
+        return false;
     }
     #endregion
 
-    #region 统计液体
+    #region 统计液体（连通区域优先）
     public static void SyncLiquid(MachData data)
     {
-        // 快速检查：若当前液体仍然充足，则直接返回
-        if (!FindLiq(data))
+        if (CheckLiq(data))
             return;
 
         var region = TShock.Regions.GetRegionByName(data.RegName);
@@ -164,50 +150,91 @@ public static class EnvManager
 
         int minX = region.Area.X, maxX = region.Area.X + region.Area.Width - 1;
         int minY = region.Area.Y, maxY = region.Area.Y + region.Area.Height - 1;
+        int w = maxX - minX + 1, h = maxY - minY + 1;
 
-        // 统计变量
-        int water = 0, lava = 0, honey = 0;
-        // 为每种液体分别记录边界
-        int waterMinY = int.MaxValue, waterMinX = int.MaxValue, waterMaxX = int.MinValue;
-        int lavaMinY = int.MaxValue, lavaMinX = int.MaxValue, lavaMaxX = int.MinValue;
-        int honeyMinY = int.MaxValue, honeyMinX = int.MaxValue, honeyMaxX = int.MinValue;
+        int size = w * h;
+        if (data.Visited == null || data.Visited.Length < size)
+            data.Visited = new bool[size];
+        else
+            Array.Clear(data.Visited, 0, size);
 
-        // 一次遍历统计所有液体
-        for (int x = minX; x <= maxX; x++)
+        var queue = data.LiqQueue;
+        queue.Clear();
+
+        int bestTotal = 0;
+        int bestWater = 0, bestLava = 0, bestHoney = 0;
+        Point bestLiqPos = data.Pos;
+
+        int[] dx = { 0, 0, -1, 1 };
+        int[] dy = { -1, 1, 0, 0 };
+
+        for (int x = 0; x < w; x++)
         {
-            for (int y = minY; y <= maxY; y++)
+            int wx = minX + x;
+            for (int y = 0; y < h; y++)
             {
-                var tile = Main.tile[x, y];
+                int idx = x * h + y;
+                if (data.Visited[idx]) continue;
+
+                int wy = minY + y;
+                var tile = Main.tile[wx, wy];
                 if (tile.liquid == 0 || WorldGen.SolidTile(tile)) continue;
 
-                int type = tile.liquidType();
-                switch (type)
+                queue.Enqueue((wx, wy));
+                data.Visited[idx] = true;
+
+                int total = 0, water = 0, lava = 0, honey = 0;
+                int areaMinX = wx, areaMaxX = wx, areaMinY = wy, areaMaxY = wy;
+
+                while (queue.Count > 0)
                 {
-                    case LiquidID.Water:
-                        water++;
-                        if (y < waterMinY) waterMinY = y;
-                        if (x < waterMinX) waterMinX = x;
-                        if (x > waterMaxX) waterMaxX = x;
-                        break;
-                    case LiquidID.Lava:
-                        lava++;
-                        if (y < lavaMinY) lavaMinY = y;
-                        if (x < lavaMinX) lavaMinX = x;
-                        if (x > lavaMaxX) lavaMaxX = x;
-                        break;
-                    case LiquidID.Honey:
-                        honey++;
-                        if (y < honeyMinY) honeyMinY = y;
-                        if (x < honeyMinX) honeyMinX = x;
-                        if (x > honeyMaxX) honeyMaxX = x;
-                        break;
+                    var (cx, cy) = queue.Dequeue();
+                    var ctile = Main.tile[cx, cy];
+                    total++;
+                    if (ctile.lava()) lava++;
+                    else if (ctile.honey()) honey++;
+                    else water++;
+
+                    if (cx < areaMinX) areaMinX = cx;
+                    if (cx > areaMaxX) areaMaxX = cx;
+                    if (cy < areaMinY) areaMinY = cy;
+                    if (cy > areaMaxY) areaMaxY = cy;
+
+                    for (int d = 0; d < 4; d++)
+                    {
+                        int nx = cx + dx[d];
+                        int ny = cy + dy[d];
+                        if (nx < minX || nx > maxX || ny < minY || ny > maxY) continue;
+                        int ix = nx - minX, iy = ny - minY;
+                        int nidx = ix * h + iy;
+                        if (data.Visited[nidx]) continue;
+                        var ntile = Main.tile[nx, ny];
+                        if (ntile.liquid > 0 && !WorldGen.SolidTile(ntile))
+                        {
+                            data.Visited[nidx] = true;
+                            queue.Enqueue((nx, ny));
+                        }
+                    }
+                }
+
+                int surfaceY = areaMinY;
+                int midX = (areaMinX + areaMaxX) / 2;
+                Point LiqPos = new Point(midX, surfaceY + 1);
+                bool depthOk = (LiqPos.Y - surfaceY == 1) || (total == 1 && LiqPos.Y == surfaceY);
+                if (!depthOk) continue;
+
+                if (total > bestTotal)
+                {
+                    bestTotal = total;
+                    bestWater = water;
+                    bestLava = lava;
+                    bestHoney = honey;
+                    bestLiqPos = LiqPos;
                 }
             }
         }
 
-        // 确定主要液体类型
-        int maxLiq = Math.Max(water, Math.Max(lava, honey));
-        if (maxLiq == 0)
+        if (bestTotal == 0)
         {
             data.MaxLiq = 0;
             data.LiqType = -1;
@@ -215,66 +242,28 @@ public static class EnvManager
             return;
         }
 
-        // 选择主要液体对应的边界
-        int liqType;
-        int count;
-        int minYval, minXval, maxXval;
-        if (maxLiq == honey)
+        data.WaterCount = bestWater;
+        data.LavaCount = bestLava;
+        data.HoneyCount = bestHoney;
+        data.MaxLiq = bestTotal;
+
+        if (bestHoney == bestTotal)
         {
-            liqType = LiquidID.Honey;
-            count = honey;
-            minYval = honeyMinY;
-            minXval = honeyMinX;
-            maxXval = honeyMaxX;
+            data.LiqName = "蜂蜜";
+            data.LiqType = LiquidID.Honey;
         }
-        else if (maxLiq == lava)
+        else if (bestLava == bestTotal)
         {
-            liqType = LiquidID.Lava;
-            count = lava;
-            minYval = lavaMinY;
-            minXval = lavaMinX;
-            maxXval = lavaMaxX;
+            data.LiqName = "岩浆";
+            data.LiqType = LiquidID.Lava;
         }
         else
         {
-            liqType = LiquidID.Water;
-            count = water;
-            minYval = waterMinY;
-            minXval = waterMinX;
-            maxXval = waterMaxX;
+            data.LiqName = "水";
+            data.LiqType = LiquidID.Water;
         }
 
-        // 计算锚点（水面中间位置，下移一格）
-        int midX = (minXval + maxXval) / 2;
-        Point anchor = new Point(midX, minYval + 1);
-
-        // 检查锚点是否可用（深度正确且上方无固体）
-        bool depthOk = (anchor.Y - minYval == 1) || (count == 1 && anchor.Y == minYval);
-        bool topSolid = anchor.Y > 0 && WorldGen.SolidTile(Main.tile[anchor.X, anchor.Y - 1]);
-
-        if (!depthOk || topSolid)
-        {
-            // 如果锚点不可用，则回退到箱子位置（并标记液体不足）
-            data.MaxLiq = 0;
-            data.LiqType = -1;
-            data.LiqName = "无";
-            data.LiqPos = data.Pos;
-            data.LiquidDead = true;
-            if(data.RegionPlayers.Count > 0)
-                foreach (var plr in data.RegionPlayers)
-                    plr.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 修正锚点[c/FF6552:失败]"), color);
-            return;
-        }
-
-        // 更新机器数据
-        data.WaterCount = water;
-        data.LavaCount = lava;
-        data.HoneyCount = honey;
-        data.MaxLiq = maxLiq;
-        data.LiqType = liqType;
-        data.LiqName = liqType == LiquidID.Honey ? "蜂蜜" :
-                       liqType == LiquidID.Lava ? "岩浆" : "水";
-        data.LiqPos = anchor;
+        data.LiqPos = bestLiqPos != Point.Zero ? bestLiqPos : data.Pos;
     }
     #endregion
 
@@ -408,60 +397,81 @@ public static class EnvManager
         int rangeSq = Config.ZoneRange * Config.ZoneRange;
         if (dx * dx + dy * dy > rangeSq) return;
 
-        if (data.ZoneCorrupt != plr.TPlayer.ZoneCorrupt)
-            data.ZoneCorrupt = plr.TPlayer.ZoneCorrupt;
-
-        if (data.ZoneCrimson != plr.TPlayer.ZoneCrimson)
-            data.ZoneCrimson = plr.TPlayer.ZoneCrimson;
-
-        if (data.ZoneJungle != plr.TPlayer.ZoneJungle)
-            data.ZoneJungle = plr.TPlayer.ZoneJungle;
-
-        if (data.ZoneSnow != plr.TPlayer.ZoneSnow)
-            data.ZoneSnow = plr.TPlayer.ZoneSnow;
-
-        if (data.ZoneHallow != plr.TPlayer.ZoneHallow)
-            data.ZoneHallow = plr.TPlayer.ZoneHallow;
-
-        if (data.ZoneDesert != plr.TPlayer.ZoneDesert)
-            data.ZoneDesert = plr.TPlayer.ZoneDesert;
-
-        if (data.ZoneBeach != plr.TPlayer.ZoneBeach)
-            data.ZoneBeach = plr.TPlayer.ZoneBeach;
-
-        if (data.ZoneDungeon != plr.TPlayer.ZoneDungeon)
-            data.ZoneDungeon = plr.TPlayer.ZoneDungeon;
-
-        if (data.ZoneRain != plr.TPlayer.ZoneRain)
-            data.ZoneRain = plr.TPlayer.ZoneRain;
-
-        if (data.luck != plr.TPlayer.luck)
-            data.luck = plr.TPlayer.luck;
+        data.ZoneCorrupt = plr.TPlayer.ZoneCorrupt;
+        data.ZoneCrimson = plr.TPlayer.ZoneCrimson;
+        data.ZoneJungle = plr.TPlayer.ZoneJungle;
+        data.ZoneSnow = plr.TPlayer.ZoneSnow;
+        data.ZoneHallow = plr.TPlayer.ZoneHallow;
+        data.ZoneDesert = plr.TPlayer.ZoneDesert;
+        data.ZoneBeach = plr.TPlayer.ZoneBeach;
+        data.ZoneDungeon = plr.TPlayer.ZoneDungeon;
+        data.ZoneRain = plr.TPlayer.ZoneRain;
+        data.ZoneShimmer = plr.TPlayer.ZoneShimmer;
+        data.ZoneSandstorm = plr.TPlayer.ZoneSandstorm;
+        data.ZoneShadowCandle = plr.TPlayer.ZoneShadowCandle;
+        data.ZoneWaterCandle = plr.TPlayer.ZoneWaterCandle;
+        data.ZonePeaceCandle = plr.TPlayer.ZonePeaceCandle;
+        data.ZoneGraveyard = plr.TPlayer.ZoneGraveyard;
+        data.ZoneGranite = plr.TPlayer.ZoneGranite;
+        data.ZoneMarble = plr.TPlayer.ZoneMarble;
+        data.ZoneMeteor = plr.TPlayer.ZoneMeteor;
+        data.ZoneGlowshroom = plr.TPlayer.ZoneGlowshroom;
+        data.ZoneGemCave = plr.TPlayer.ZoneGemCave;
+        data.ZoneHive = plr.TPlayer.ZoneHive;
+        data.ZoneLihzhardTemple = plr.TPlayer.ZoneLihzhardTemple;
+        data.ZoneOldOneArmy = plr.TPlayer.ZoneOldOneArmy;
+        data.ZoneTowerNebula = plr.TPlayer.ZoneTowerNebula;
+        data.ZoneTowerSolar = plr.TPlayer.ZoneTowerSolar;
+        data.ZoneTowerStardust = plr.TPlayer.ZoneTowerStardust;
+        data.ZoneTowerVortex = plr.TPlayer.ZoneTowerVortex;
+        data.ZoneUndergroundDesert = plr.TPlayer.ZoneUndergroundDesert;
+        data.luck = plr.TPlayer.luck;
     }
     #endregion
 
-    #region 将缓存的环境赋值给假玩家
+    #region 将缓存环境赋值给假玩家
     public static void SetupTempPlayer(MachData data)
     {
         var plr = TempPlayer;
         plr.position = new Vector2(data.Pos.X * 16, data.Pos.Y * 16);
         plr.UpdateBiomes();
-        plr.ZoneCorrupt = data.ZoneCorrupt;
-        plr.ZoneCrimson = data.ZoneCrimson;
-        plr.ZoneJungle = data.ZoneJungle;
-        plr.ZoneSnow = data.ZoneSnow;
-        plr.ZoneHallow = data.ZoneHallow;
-        plr.ZoneDesert = data.ZoneDesert;
-        plr.ZoneBeach = data.ZoneBeach;
-        plr.ZoneRain = data.ZoneRain;
-        plr.luck = data.luck;
+        plr.ZoneHallow = data.ZoneHallow; // 神圣
+        plr.ZoneCorrupt = data.ZoneCorrupt; //腐化
+        plr.ZoneCrimson = data.ZoneCrimson; // 猩红
+        plr.ZoneJungle = data.ZoneJungle; // 丛林
+        plr.ZoneSnow = data.ZoneSnow; // 雪原
+        plr.ZoneDesert = data.ZoneDesert; // 沙漠
+        plr.ZoneBeach = data.ZoneBeach; // 海洋
+        plr.ZoneDungeon = data.ZoneDungeon; // 地牢
+        plr.ZoneShimmer = data.ZoneShimmer; // 微光
+        plr.ZoneRain = data.ZoneRain; // 下雨
+        plr.ZoneSandstorm = data.ZoneSandstorm; // 沙尘暴
+        plr.ZoneShadowCandle = data.ZoneShadowCandle; // 影烛 
+        plr.ZoneWaterCandle = data.ZoneWaterCandle; // 水蜡烛 
+        plr.ZonePeaceCandle = data.ZonePeaceCandle; // 和平蜡烛 
+        plr.ZoneGraveyard = data.ZoneGraveyard; // 墓地 
+        plr.ZoneGranite = data.ZoneGranite; // 花岗岩 
+        plr.ZoneMarble = data.ZoneMarble; // 大理石 
+        plr.ZoneMeteor = data.ZoneMeteor; // 陨石坑 
+        plr.ZoneGlowshroom = data.ZoneGlowshroom; // 蘑菇地 
+        plr.ZoneGemCave = data.ZoneGemCave; // 宝石洞 
+        plr.ZoneHive = data.ZoneHive; // 蜂巢 
+        plr.ZoneLihzhardTemple = data.ZoneLihzhardTemple; // 神庙 
+        plr.ZoneOldOneArmy = data.ZoneOldOneArmy; // 旧日军团 
+        plr.ZoneTowerNebula = data.ZoneTowerNebula; // 星云天塔柱 
+        plr.ZoneTowerSolar = data.ZoneTowerSolar; // 日耀天塔柱 
+        plr.ZoneTowerStardust = data.ZoneTowerStardust; // 星尘天塔柱 
+        plr.ZoneTowerVortex = data.ZoneTowerVortex; // 星漩天塔柱 
+        plr.ZoneUndergroundDesert = data.ZoneUndergroundDesert; // 地下沙漠 
+
+        plr.luck = data.luck; // 幸运值
 
         int hl = data.HeightLevel;
-        plr.ZoneSkyHeight = hl == 0;
-        plr.ZoneOverworldHeight = hl == 1;
-        plr.ZoneDirtLayerHeight = hl == 2;
-        plr.ZoneRockLayerHeight = hl == 3;
-        plr.ZoneUnderworldHeight = hl == 4;
+        plr.ZoneSkyHeight = hl == 0; // 天空
+        plr.ZoneOverworldHeight = hl == 1; // 地表
+        plr.ZoneDirtLayerHeight = hl == 2; // 地下
+        plr.ZoneRockLayerHeight = hl == 3; // 洞穴
+        plr.ZoneUnderworldHeight = hl == 4; // 地狱
     }
     #endregion
 

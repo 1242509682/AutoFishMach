@@ -62,6 +62,8 @@ internal class Configuration
     public List<CustomUsedItems> CustomUsedItem { get; set; } = new();
     [JsonProperty("自定义渔获表", Order = 17)]
     public List<CustomFishRule> CustomFishes { get; set; } = new();
+    [JsonProperty("液体弹幕检测", Order = 18)] 
+    public List<int> LiqProj { get; set; } = [];
 
     [JsonIgnore] public int MinFrames { get; private set; } = 60;
     [JsonIgnore] public int MaxFrames { get; private set; } = 60;
@@ -136,6 +138,19 @@ internal class Configuration
             // 恐惧鹦鹉螺（肉后，低概率 1/60）
             new CustomFishRule() { NPCType = NPCID.BloodNautilus, Chance = 60, Cond = new List<string>() { "血月", "肉后" } },
         };
+
+        LiqProj =
+        [
+            // 液体炸弹
+            WetBomb, LavaBomb, HoneyBomb, DryBomb,
+            // 液体火箭、手榴弹、地雷
+            LavaRocket, LavaGrenade, LavaMine,
+            HoneyRocket, HoneyGrenade, HoneyMine,
+            DryRocket, DryGrenade, DryMine,
+            // 雪人火箭液体变种
+            WetSnowmanRocket, LavaSnowmanRocket, HoneySnowmanRocket, DrySnowmanRocket
+        ];
+        LiqProj.Sort(); // 排序
     }
     #endregion
 

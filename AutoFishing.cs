@@ -27,7 +27,7 @@ public class AutoFishing
             return;
 
         // 如果液体已死，不再检查液体，直接返回
-        if (data.LiquidDead)
+        if (data.LiqDead)
             return;
 
         // 1. 液体实时更新(内部自带快速检查)
@@ -39,16 +39,16 @@ public class AutoFishing
             if (!data.LiquidBroadcast)
             {
                 data.LiquidBroadcast = true;
-                data.LiquidDead = true; // 标记液体已死，停止后续检测
-                var text = data.MaxLiq == 0
-                    ? $"钓鱼机 [c/ED756F:{data.ChestIndex}] 鱼池[c/FF716D:液体异常]\n传送 /tppos {data.Pos.X} {data.Pos.Y}\n"
-                    : $"钓鱼机 [c/ED756F:{data.ChestIndex}] 液体不足 [c/FF716D:{Config.NeedLiqStack}] 格\n传送 /tppos {data.Pos.X} {data.Pos.Y}\n";
-                TSPlayer.All.SendMessage(TextGradient(text + "修好鱼池后[c/F1FA51:打开箱子]即可"), color);
+                data.LiqDead = true; // 标记液体已死，停止后续检测
+                var text = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 鱼池[c/FF716D:液体异常]\n" +
+                           $"传送 /tppos {data.Pos.X} {data.Pos.Y}";
+
+                TSPlayer.All.SendMessage(TextGradient(text), color);
             }
             return;
         }
         data.LiquidBroadcast = false;
-        data.LiquidDead = false; // 液体充足时清除死亡标记
+        data.LiqDead = false; // 液体充足时清除死亡标记
 
         // 3. 鱼竿
         if (!FindRod(out Item rodItem, out int rodSlot))
@@ -57,8 +57,8 @@ public class AutoFishing
             if (!data.RodBroadcast)
             {
                 data.RodBroadcast = true;
-                var text = $"钓鱼机 [c/ED756F:{data.ChestIndex}] 未找到[c/FF716D:鱼竿]\n" +
-                           $"传送 /tppos {data.Pos.X} {data.Pos.Y}\n";
+                var text = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 未找到[c/FF716D:鱼竿]\n" +
+                           $"传送 /tppos {data.Pos.X} {data.Pos.Y}";
                 TSPlayer.All.SendMessage(TextGradient(text), color);
             }
             return;
@@ -71,8 +71,8 @@ public class AutoFishing
             if (!data.BaitBroadcast)
             {
                 data.BaitBroadcast = true;
-                var text = $"钓鱼机 [c/ED756F:{data.ChestIndex}] 未找到[c/FF716D:鱼饵]\n" +
-                           $"传送 /tppos {data.Pos.X} {data.Pos.Y}\n";
+                var text = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 未找到[c/FF716D:鱼饵]\n" +
+                           $"传送 /tppos {data.Pos.X} {data.Pos.Y}";
                 TSPlayer.All.SendMessage(TextGradient(text), color);
             }
             return;

@@ -314,7 +314,7 @@ internal class MyCommand
         mess.AppendLine($"熔岩钓鱼:{(data.CanFishInLava ? "是" : "否")} 节省鱼饵:{(data.HasTackle ? "是" : "否")}");
         mess.AppendLine($"需要电路:{(Config.NeedWiring ? "是" : "否")} 钓任务鱼:{(Config.QuestFish ? "是" : "否")}");
         mess.AppendLine($"区域保护:{(Config.RegionBuild ? "是 " : "否 ")} 范围:[c/61BCE3:{Config.Range}]格");
-        mess.AppendLine($"无人关闭:{(Config.AutoStopWhenEmpty ? "是" : "否")} 鱼池异常:{(data.LiquidDead ? "是" : "否")}  ");
+        mess.AppendLine($"无人关闭:{(Config.AutoStopWhenEmpty ? "是" : "否")} 鱼池异常:{(data.LiqDead ? "是" : "否")}  ");
         mess.AppendLine($"允许怪物:{(Config.EnableCustomNPC ? "是" : "否")} 禁钓多怪:{(Config.SoloCustomMonster ? "是" : "否")}");
         mess.AppendLine($"禁怪模式:{(Config.SoloMode == 0 ? "不同类各[c/61BBE2:1]个" : "只钓[c/FFAC6D:1]个")}");
 
@@ -462,6 +462,25 @@ internal class MyCommand
         if (data.ZoneDesert) env.Add("沙漠");
         if (data.ZoneBeach) env.Add("海洋");
         if (data.ZoneDungeon) env.Add("地牢");
+        if (data.ZoneShimmer) env.Add("微光");
+        if (data.ZoneSandstorm) env.Add("沙尘暴");
+        if (data.ZoneShadowCandle) env.Add("影烛");
+        if (data.ZoneWaterCandle) env.Add("水蜡烛");
+        if (data.ZonePeaceCandle) env.Add("和平蜡烛");
+        if (data.ZoneGraveyard) env.Add("墓地");
+        if (data.ZoneGranite) env.Add("花岗岩");
+        if (data.ZoneMarble) env.Add("大理石");
+        if (data.ZoneMeteor) env.Add("陨石");
+        if (data.ZoneGlowshroom) env.Add("蘑菇地");
+        if (data.ZoneGemCave) env.Add("宝石洞");
+        if (data.ZoneHive) env.Add("蜂巢");
+        if (data.ZoneLihzhardTemple) env.Add("神庙");
+        if (data.ZoneOldOneArmy) env.Add("旧日军团");
+        if (data.ZoneTowerNebula) env.Add("星云柱");
+        if (data.ZoneTowerSolar) env.Add("日耀柱");
+        if (data.ZoneTowerStardust) env.Add("星尘柱");
+        if (data.ZoneTowerVortex) env.Add("星旋柱");
+        if (data.ZoneUndergroundDesert) env.Add("地下沙漠");
         if (data.RolledRemixOcean) env.Add("颠倒海洋");
 
         string height = GetHeightName(data.HeightLevel);
@@ -1005,7 +1024,7 @@ internal class MyCommand
         if (Need.Count > 0)
         {
             plr.SendMessage(TextGradient($"[c/FE6352:缺:] {string.Join("、", Need)}"), color);
-            plr.SendMessage(TextGradient($"[c/FF6352:注:]机器异常[c/F1FA51:打开箱子]修复"), color);
+            plr.SendMessage(TextGradient($"[c/FF6352:注:]异常时解决[c/F1FA51:以上]问题自动恢复"), color);
         }
     }
     #endregion

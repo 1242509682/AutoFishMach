@@ -20,7 +20,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     public static string PluginName => "自动钓鱼机";
     public override string Name => PluginName;
     public override string Author => "羽学";
-    public override Version Version => new(1, 1, 0);
+    public override Version Version => new(1, 1, 1);
     public override string Description => "使用/afm 指令指定一个箱子作为自动钓鱼机";
     #endregion
 
@@ -59,7 +59,10 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         ServerApi.Hooks.NpcKilled.Register(this, OnNPCKilled);
         GetDataHandlers.ChestItemChange += OnChestItemChange!;
         GetDataHandlers.ChestOpen += OnChestOpen!;
+        GetDataHandlers.PlayerZone += OnPlayerZone;
         GetDataHandlers.PlayerBuffUpdate += OnPlayerBuffUpdate!;
+        GetDataHandlers.LiquidSet += OnLiquidSet!;
+        GetDataHandlers.NewProjectile += OnNewProjectile;
         RegionHooks.RegionEntered += OnRegionEnter;
         RegionHooks.RegionLeft += OnRegionLeave;
         Commands.ChatCommands.Add(new Command(perm, MyCommand.CmdAfm, afm));
@@ -80,7 +83,10 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             ServerApi.Hooks.NpcKilled.Deregister(this, OnNPCKilled);
             GetDataHandlers.ChestItemChange -= OnChestItemChange!;
             GetDataHandlers.ChestOpen -= OnChestOpen!;
+            GetDataHandlers.PlayerZone -= OnPlayerZone;
             GetDataHandlers.PlayerBuffUpdate -= OnPlayerBuffUpdate!;
+            GetDataHandlers.LiquidSet -= OnLiquidSet!;
+            GetDataHandlers.NewProjectile -= OnNewProjectile;
             RegionHooks.RegionEntered -= OnRegionEnter;
             RegionHooks.RegionLeft -= OnRegionLeave;
             Commands.ChatCommands.RemoveAll(x => x.CommandDelegate == MyCommand.CmdAfm);
@@ -251,6 +257,69 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     }
     #endregion
 
+    #region 环境同步事件（环境变化、液体修改、弹幕生成）
+    private void OnPlayerZone(object? sender, PlayerZoneEventArgs e)
+    {
+        if (!Config.Enabled) return;
+
+        var plr = e.Player;
+        if (plr == null || !plr.Active ||
+            plr.CurrentRegion == null ||
+            !IsAfmRegion(plr.CurrentRegion.Name)) return;
+
+        var data = FindRegion(plr.CurrentRegion.Name);
+        if (data == null) return;
+
+        // 恢复液体自动检测
+        if (data.LiqDead)
+            data.LiqDead = false;
+
+        // 同步环境（生物群落、幸运值等）
+        if ((DateTime.UtcNow - data.LastZoneUpdate).TotalSeconds >= 10)
+        {
+            EnvManager.SyncZone(plr, data);
+            data.LastZoneUpdate = DateTime.UtcNow;
+        }
+    }
+
+    private void OnLiquidSet(object? sender, LiquidSetEventArgs e)
+    {
+        if (!Config.Enabled || e.Amount <= 0) return;
+
+        var plr = e.Player;
+        if (plr == null || !plr.Active ||
+            plr.CurrentRegion == null ||
+            !IsAfmRegion(plr.CurrentRegion.Name)) return;
+
+        var data = FindRegion(plr.CurrentRegion.Name);
+        if (data == null) return;
+
+        // 恢复液体自动检测
+        if (data.LiqDead)
+            data.LiqDead = false;
+    }
+
+    private void OnNewProjectile(object? sender, NewProjectileEventArgs e)
+    {
+        if (!Config.Enabled) return;
+
+        // 仅处理配置中指定的弹幕类型（如液体炸弹、环境改造弹等）
+        if (!Config.LiqProj.Contains(e.Type)) return;
+
+        var plr = e.Player;
+        if (plr == null || !plr.Active ||
+            plr.CurrentRegion == null ||
+            !IsAfmRegion(plr.CurrentRegion.Name)) return;
+
+        var data = FindRegion(plr.CurrentRegion.Name);
+        if (data == null) return;
+
+        // 恢复液体自动检测
+        if (data.LiqDead)
+            data.LiqDead = false;
+    }
+    #endregion
+
     #region 挖掉箱子自动移除钓鱼机与对应区域
     private static void OnKillTile(On.Terraria.WorldGen.orig_KillTile orig, int x, int y, bool fail, bool effectOnly, bool noItem)
     {
@@ -318,13 +387,6 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                 return;
             }
 
-            // 如果液体不足导致机器暂停，玩家打开箱子时恢复检测
-            if (data.LiquidDead)
-            {
-                data.LiquidDead = false;
-                plr.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 尝试修正锚点坐标.."), color);
-            }
-
             // 检查区域是否存在，若不存在则重建
             var region = TShock.Regions.GetRegionByName(data.RegName);
             if (region == null)
@@ -350,8 +412,13 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             EnvManager.SyncZone(plr, data);
             // 更新物品缓存
             EnvManager.SyncItem(data);
-            // 更新液体
+
+            // 恢复液体自动检测
+            if (data.LiqDead)
+                data.LiqDead = false;
+
             EnvManager.SyncLiquid(data);
+
             Save(data); // 保存一次
         }
     }
@@ -387,9 +454,9 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         }
 
         // 如果液体不足导致机器暂停，玩家打开箱子时恢复检测
-        if (data.LiquidDead)
+        if (data.LiqDead)
         {
-            data.LiquidDead = false;
+            data.LiqDead = false;
             plr.SendMessage(TextGradient($"鱼池液体不足[c/FF6352:已暂停]工作\n" +
                                          $"正在尝试修复ing..."), color);
         }
@@ -398,8 +465,6 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         EnvManager.SyncZone(plr, data);
         // 更新物品缓存
         EnvManager.SyncItem(data);
-        // 更新液体
-        EnvManager.SyncLiquid(data);
     }
     #endregion
 
