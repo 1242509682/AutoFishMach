@@ -107,7 +107,6 @@ internal class Configuration
             { ItemID.AnglerHat, 5 }, // 渔夫帽 +5
             { ItemID.AnglerVest, 5 }, // 渔夫背心 +5
             { ItemID.AnglerPants, 5 },  // 渔夫裤 +5
-            { ItemID.CratePotion, 15 }  // 宝匣药水 +5
         };
 
         CustomUsedItem = new List<CustomUsedItems>
@@ -159,22 +158,11 @@ internal class Configuration
     #region 解析随机间隔
     public void ParseFrames()
     {
-        if (string.IsNullOrWhiteSpace(FishInterval))
+        var (success, min, max) = Utils.ParseIntRange(FishInterval);
+        if (success)
         {
-            MinFrames = MaxFrames = 60;
-            return;
-        }
-        var parts = FishInterval.Split(',');
-        if (parts.Length == 1 && int.TryParse(parts[0], out int single))
-        {
-            MinFrames = MaxFrames = single;
-        }
-        else if (parts.Length >= 2 &&
-                 int.TryParse(parts[0], out int min) &&
-                 int.TryParse(parts[1], out int max))
-        {
-            MinFrames = (int)MathF.Min(min, max);
-            MaxFrames = (int)MathF.Max(min, max);
+            MinFrames = min;
+            MaxFrames = max;
         }
         else
         {
@@ -213,7 +201,9 @@ internal class Configuration
                 string json = File.ReadAllText(Paths);
                 string[] lines = json.Split('\n');
                 int line = ex.LineNumber;
-                string text = lines[line - 2].Trim();
+                // 防止越界：确保索引至少为 0，且不超过数组长度
+                int idx = Math.Max(0, Math.Min(line - 2, lines.Length - 1));
+                string text = lines[idx].Trim();
                 throw new Exception($"位置: 第 {line - 1} 行\n" +
                                     $"内容: {text ?? string.Empty}\n" +
                                     $"路径: {FormatPath(ex.Path ?? string.Empty)}", ex);

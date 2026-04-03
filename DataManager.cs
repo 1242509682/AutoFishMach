@@ -65,7 +65,8 @@ internal class DataManager
             MachByRegName.Remove(oldRegion);
 
         // 添加新映射
-        Machines.Add(data);
+        if (!Machines.Contains(data))
+            Machines.Add(data);
         MachByPos[data.Pos] = data;
         if (data.ChestIndex != -1)
             MachByChest[data.ChestIndex] = data;

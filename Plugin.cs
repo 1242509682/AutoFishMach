@@ -21,7 +21,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     public static string PluginName => "自动钓鱼机";
     public override string Name => PluginName;
     public override string Author => "羽学";
-    public override Version Version => new(1, 1, 2);
+    public override Version Version => new(1, 1, 3);
     public override string Description => "使用/afm 指令指定一个箱子作为自动钓鱼机";
     #endregion
 
@@ -214,7 +214,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             while (Queue.Count > 0 && maxCount < 10)
             {
                 var data = Queue.Dequeue();
-                (data.Engine ?? (data.Engine = new AutoFishing(data))).Execute();
+                var engine = data.Engine ?? (data.Engine = new AutoFishing(data));
+                engine.Execute();
                 maxCount++;
             }
         }
@@ -247,7 +248,15 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                         engine.PlayMove(req.item, req.from, req.toPos, req.skipFake);
                         var chest = Main.chest[req.chestIdx];
                         if (chest != null)
-                            AutoFishing.TryPutIntoChest(chest, req.item);
+                        {
+                            if (!AutoFishing.TryPutIntoChest(chest, req.item))
+                            {
+                                // 放入输出箱失败（满箱），回退到主箱
+                                var mainChest = Main.chest[req.data.ChestIndex];
+                                if (mainChest != null)
+                                    AutoFishing.TryPutIntoChest(mainChest, req.item);
+                            }
+                        }
                         break;
                 }
                 data.AnimFrame = Timer + 60; // 每台机器独立计时
@@ -275,11 +284,11 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         var pos = new Point(x, y);
         var data = DataManager.FindTile(pos);
         if (data == null) return;
-
+        var engine = data.Engine ?? (data.Engine = new AutoFishing(data));
         // 如果没开启电路限频,则根据游戏内的计时器频率触发
         if (!Config.LimitFrames)
         {
-            (data.Engine ?? (data.Engine = new AutoFishing(data))).Execute();
+            engine.Execute();
             return;
         }
 
@@ -288,7 +297,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         if (Timer < data.nextFrame)
             return;
 
-        (data.Engine ?? (data.Engine = new AutoFishing(data))).Execute();
+        engine.Execute();
 
         // 更新下次执行时间（使用配置的间隔）
         int maxFrames = Config.MaxFrames;
@@ -386,7 +395,6 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                     if (data.OutChest == idx)
                     {
                         data.OutChest = -1;
-                        data.SupChest = false;
                         // 清空动画队列，避免播放过时动画
                         data.ClearAnim();
                         Save(data);
@@ -452,8 +460,9 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         }
 
         // 设置输出箱
-        if (plr.GetData<int>("out") is int chestIdx && chestIdx != 0)
+        if (plr.ContainsData("out"))
         {
+            int chestIdx = plr.GetData<int>("out");
             var target = FindChest(chestIdx);
             if (target == null)
             {
@@ -479,7 +488,6 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             }
 
             target.OutChest = c;
-            target.SupChest = true;
             Save(target);
             plr.SendMessage(TextGradient($"箱子 [c/ED756F:{c}] 已设为钓鱼机 [c/ED756F:{target.ChestIndex}] 的输出箱"), color);
             plr.RemoveData("out");
@@ -667,11 +675,11 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         var plr = TShock.Players[args.Who];
         if (plr == null || !IsAfmRegion(plr.CurrentRegion.Name)) return;
 
-        if (plr.GetData<bool>("set")) plr.RemoveData("set");
-        if (plr.GetData<bool>("info")) plr.RemoveData("info");
-        if (plr.GetData<bool>("sync")) plr.RemoveData("sync");
+        if (plr.ContainsData("set")) plr.RemoveData("set");
+        if (plr.ContainsData("info")) plr.RemoveData("info");
+        if (plr.ContainsData("sync")) plr.RemoveData("sync");
 
-        if (plr.GetData<int>("out") is int chestIdx && chestIdx != 0)
+        if (plr.ContainsData("out"))
             plr.RemoveData("out");
 
         if (pend.ContainsKey(plr.Name))

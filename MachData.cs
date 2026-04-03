@@ -50,9 +50,7 @@ public class MachData
     public Point Pos { get; set; } = new Point();
     [JsonProperty("箱子索引")]
     public int ChestIndex { get; set; } = -1;
-    [JsonProperty("输入模式")]
-    public bool SupChest { get; set; } = false;   // true=输入模式（从主箱取物品）
-    [JsonProperty("输出箱")]
+    [JsonProperty("输出索引")]
     public int OutChest { get; set; } = -1;       // 输出箱索引，-1表示使用主箱
     [JsonProperty("神圣")]
     public bool ZoneHallow { get; set; }

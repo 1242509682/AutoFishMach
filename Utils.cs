@@ -969,6 +969,75 @@ internal class Utils
         if (totalSec < 60) return $"{totalSec}秒";
         if (totalSec < 3600) return $"{totalSec / 60}分{totalSec % 60:D2}秒";
         return $"{totalSec / 3600}时{(totalSec % 3600) / 60}分{totalSec % 60:D2}秒";
+    }
+    #endregion
+
+    #region 检查像素坐标是否在世界边界内
+    /// <summary>
+    /// 检查像素坐标是否在世界边界内
+    /// </summary>
+    /// <param name="position">像素坐标</param>
+    /// <param name="margin">边距（像素）</param>
+    public static bool InWorldBounds(Vector2 position, float margin = 0f)
+    {
+        return position.X >= margin && position.X <= Main.maxTilesX * 16f - margin &&
+               position.Y >= margin && position.Y <= Main.maxTilesY * 16f - margin;
     } 
+    #endregion
+
+    #region 检查两点之间的平方距离是否小于等于指定像素范围的平方（性能更好）
+    /// <summary>
+    /// 检查两点之间的平方距离是否小于等于指定像素范围的平方（性能更好）
+    /// </summary>
+    public static bool InRangeSquared(Vector2 from, Vector2 to, float rangePx)
+    {
+        float dx = from.X - to.X;
+        float dy = from.Y - to.Y;
+        return dx * dx + dy * dy <= rangePx * rangePx;
+    }
+
+    #endregion
+
+    #region 解析整数范围字符串（如 "60,240"）返回 (min, max)，若失败返回 (false,0,0)
+    /// <summary>
+    /// 解析整数范围字符串（如 "60,240"）返回 (min, max)，若失败返回 (false,0,0)
+    /// </summary>
+    public static (bool success, int min, int max) ParseIntRange(string rangeStr)
+    {
+        if (string.IsNullOrWhiteSpace(rangeStr))
+            return (false, 0, 0);
+
+        var parts = rangeStr.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length != 2)
+            return (false, 0, 0);
+
+        if (!int.TryParse(parts[0].Trim(), out int a) || !int.TryParse(parts[1].Trim(), out int b))
+            return (false, 0, 0);
+
+        return (true, Math.Min(a, b), Math.Max(a, b));
+    } 
+    #endregion
+
+    #region  生成对称范围内的随机偏移向量（像素）
+    /// <summary>
+    /// 生成对称范围内的随机偏移向量（像素）
+    /// </summary>
+    /// <param name="maxOffset">最大偏移绝对值</param>
+    public static Vector2 RandomOffset(float maxOffset)
+    {
+        if (maxOffset <= 0) return Vector2.Zero;
+        return new Vector2(
+            Main.rand.Next(-(int)maxOffset, (int)maxOffset + 1),
+            Main.rand.Next(-(int)maxOffset, (int)maxOffset + 1)
+        );
+    }
+
+    public static Vector2 RandomOffset(float maxX, float maxY)
+    {
+        return new Vector2(
+            Main.rand.Next(-(int)maxX, (int)maxX + 1),
+            Main.rand.Next(-(int)maxY, (int)maxY + 1)
+        );
+    }
     #endregion
 }

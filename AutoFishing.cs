@@ -61,6 +61,8 @@ public class AutoFishing
                 data.RodBroadcast = true;
                 var text = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 未找到[c/FF716D:鱼竿]\n";
                 TSPlayer.All.SendMessage(TextGradient(text), color);
+                // 清空动画队列，避免播放过时动画
+                data.ClearAnim();
             }
             return;
         }
@@ -74,6 +76,8 @@ public class AutoFishing
                 data.BaitBroadcast = true;
                 var text = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 未找到[c/FF716D:鱼饵]\n";
                 TSPlayer.All.SendMessage(TextGradient(text), color);
+                // 清空动画队列，避免播放过时动画
+                data.ClearAnim();
             }
             return;
         }
@@ -118,7 +122,7 @@ public class AutoFishing
         if (data.Exclude.Contains(fish.type)) return;
 
         // 10. 放入箱子
-        PutToChest(fish);
+        PutToAnim(fish);
     }
     #endregion
 
@@ -490,7 +494,7 @@ public class AutoFishing
                 var custom = new Item();
                 custom.SetDefaults(rule.ItemType);
                 custom.stack = 1;
-                PutToChest(custom);
+                PutToAnim(custom);
                 allow = true;
             }
         }
@@ -635,17 +639,17 @@ public class AutoFishing
     }
     #endregion
 
-    #region 物品存入箱子
-    private void PutToChest(Item item)
+    #region 物品存入动画排序
+    private void PutToAnim(Item item)
     {
         Vector2 from = new Vector2(data.LiqPos.X * 16 + 8, data.LiqPos.Y * 16 + 8);
         bool queued = false;
 
         // 1. 传输模式
-        if (data.SupChest && data.OutChest != -1)
+        if (data.OutChest != -1)
         {
             var outChest = Main.chest[data.OutChest];
-            if (outChest != null)
+            if (outChest != null && HasRoomInChest(outChest, item))
             {
                 var mainChest = Main.chest[data.ChestIndex];
                 // 飞到主箱（动画，无实际转移）
@@ -682,7 +686,7 @@ public class AutoFishing
                     var other = chests[i];
                     if (other == null) continue;
                     if (i == data.ChestIndex) continue;
-                    if (data.SupChest && i == data.OutChest) continue;
+                    if (i == data.OutChest) continue;
                     if (!region.Area.Contains(other.x, other.y)) continue;
 
                     AddTransfer(item, from, new Point(other.x, other.y), other.index, skipFake: false);
@@ -703,8 +707,38 @@ public class AutoFishing
                 foreach (var plr in data.RegionPlayers)
                     plr.SendData(PacketTypes.UpdateItemDrop, null, index);
         }
-    }
 
+        // 5. 每次钓鱼产出后，主动将主箱中的积压物品转移到输出箱（如果传输模式开启）
+        if (data.OutChest != -1)
+        {
+            TransferItem(data);
+        }
+    }
+    #endregion
+
+    #region 预检查输出箱空间
+    private static bool HasRoomInChest(Chest chest, Item item)
+    {
+        var items = chest.item.AsSpan();
+        bool hasSlot = false;
+        for (int i = 0; i < items.Length; i++)
+        {
+            var slotItem = items[i];
+            if (slotItem != null && !slotItem.IsAir)
+            {
+                if (slotItem.type == item.type && slotItem.stack < slotItem.maxStack)
+                    return true; // 找到可堆叠的同种物品，立即返回
+            }
+            else
+            {
+                hasSlot = true; // 标记存在空位，但继续遍历以防有可堆叠物品
+            }
+        }
+        return hasSlot; // 没有可堆叠物品，但有空位则返回 true
+    }
+    #endregion
+
+    #region 物品放入箱子方法
     public static bool TryPutIntoChest(Chest chest, Item item)
     {
         var items = chest.item.AsSpan();
@@ -734,7 +768,7 @@ public class AutoFishing
             return true;
         }
         return false;
-    }
+    } 
     #endregion
 
     #region 动画执行队列方法
@@ -814,7 +848,7 @@ public class AutoFishing
         int FakeFishCount = Main.rand.Next(2, 5);
         for (int i = 0; i < FakeFishCount; i++)
         {
-            Vector2 offset = new Vector2(Main.rand.Next(-12, 13), Main.rand.Next(-6, 7)); // 独立偏移
+            Vector2 offset = RandomOffset(12, 6);
             // 向位
             bool isJump = Main.rand.Next(3) == 0; // 1/3 概率跳跃
             float horiz = Main.rand.Next(-6, 7) * 0.5f; // 垂直
@@ -888,16 +922,15 @@ public class AutoFishing
     #region 将主箱子中的非必备物品转移到输出箱
     public static void TransferItem(MachData data)
     {
-        if (!data.SupChest || data.OutChest == -1) return;
+        if (data.OutChest == -1) return;
         if (data.ChestIndex == data.OutChest) return; // 输出箱就是主箱，避免自身转移
 
         var mainChest = Main.chest[data.ChestIndex];
         var outChest = Main.chest[data.OutChest];
         if (mainChest == null || outChest == null) return;
 
-        bool moved = false;
+        List<string> name = new();
         var items = mainChest.item.AsSpan();
-
         for (int i = 0; i < items.Length; i++)
         {
             var item = items[i];
@@ -907,17 +940,20 @@ public class AutoFishing
             // 尝试放入输出箱
             if (TryPutIntoChest(outChest, item))
             {
+                name.Add(ItemIcon(item.type, item.stack));
                 // 清空原格子
                 item.TurnToAir();
                 NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, data.ChestIndex, i);
-                moved = true;
             }
         }
 
-        if (moved && data.RegionPlayers.Count > 0)
+        if (name.Count > 0 && data.RegionPlayers.Count > 0)
         {
-            foreach (var plr in data.RegionPlayers)
-                plr.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 已将物品转移至输出箱"), color);
+            foreach (TSPlayer plr in data.RegionPlayers)
+            {
+                plr.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 已将物品转移至输出箱:\n" +
+                                             string.Join(",", name)), color);
+            }
         }
     }
     #endregion
