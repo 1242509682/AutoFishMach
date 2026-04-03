@@ -218,7 +218,7 @@ internal class MyCommand
                     // 检查是否要传送到输出箱
                     if (args.Parameters.Count >= 3 && args.Parameters[2].Equals("c", StringComparison.OrdinalIgnoreCase))
                     {
-                        if (!data.SupChest || data.OutChest == -1)
+                        if (data.OutChest == -1)
                         {
                             plr.SendErrorMessage("该钓鱼机未设置输出箱");
                             return;
@@ -417,7 +417,6 @@ internal class MyCommand
         int effectiveWater = data.MaxLiq;
         if (data.LiqName == "蜂蜜") effectiveWater = (int)(effectiveWater * 1.5);
         float waterQuality = MathF.Min(1f, (float)effectiveWater / waterNeeded);
-
         // 消息构建
         var mess = new StringBuilder();
         mess.AppendLine($"\n[c/E8EB6E:{data.Owner}] 钓鱼机 [c/ED756F:{data.ChestIndex}] [c/75D1FF:{data.RegionPlayers.Count}] 人");
@@ -428,14 +427,35 @@ internal class MyCommand
         if (Math.Abs(data.luck) > 0.001f)
             mess.AppendLine($"幸运值:[c/61E26C:{data.luck:F2}] (影响渔力±10%~40%)");
         mess.AppendLine($"基础渔力:[c/61E26C:{basePower}]点 实际渔力:{luckText}");
-        mess.AppendLine($"熔岩钓鱼:{(data.CanFishInLava ? "是" : "否")} 节省鱼饵:{(data.HasTackle ? "是" : "否")}");
-        mess.AppendLine($"需要电路:{(Config.NeedWiring ? "是" : "否")} 钓任务鱼:{(Config.QuestFish ? "是" : "否")}");
-        mess.AppendLine($"区域保护:{(Config.RegionBuild ? "是 " : "否 ")} 范围:[c/61BCE3:{Config.Range}]格");
-        mess.AppendLine($"无人关闭:{(Config.AutoStopWhenEmpty ? "是" : "否")} 鱼池异常:{(data.LiqDead ? "是" : "否")}  ");
-        mess.AppendLine($"允许怪物:{(Config.EnableCustomNPC ? "是" : "否")} 禁钓多怪:{(Config.SoloCustomMonster ? "是" : "否")}");
-        mess.AppendLine($"禁怪模式:{(Config.SoloMode == 0 ? "不同类各[c/61BBE2:1]个" : "只钓[c/FFAC6D:1]个")}");
-        string transStatus = data.SupChest ? (data.OutChest != -1 ? $"输出箱:[c/ED756F:{data.OutChest}]" : "未设输出箱") : "未开启";
-        mess.AppendLine($"传输模式:{(data.SupChest ? "是" : "否")} {transStatus}");
+
+        // 收集需要显示的条件文本（不包括固定显示的区域范围）
+        var items = new List<string>();
+
+        if (data.CanFishInLava) items.Add("熔岩钓鱼:是");
+        if (data.HasTackle) items.Add("节省鱼饵:是");
+        if (Config.NeedWiring) items.Add("需要电路:是");
+        if (Config.QuestFish) items.Add("钓任务鱼:是");
+        if (Config.AutoStopWhenEmpty) items.Add("无人关闭:是");
+        if (data.OutChest != -1) items.Add("传输模式:是");
+        if (Config.EnableCustomNPC) items.Add("允许怪物:是");
+        if (Config.SoloCustomMonster)
+        {
+            items.Add("禁钓多怪:是");
+            items.Add($"禁怪模式:{(Config.SoloMode == 0 ? "不同类各[c/61BBE2:1]个" : "只钓[c/FFAC6D:1]个")}");
+        }
+
+        // 每两个条件合并为一行
+        for (int i = 0; i < items.Count; i += 2)
+        {
+            string line = items[i];
+            if (i + 1 < items.Count)
+                line += " " + items[i + 1];
+            mess.AppendLine(line);
+        }
+
+        // 区域保护 + 区域范围（区域范围始终显示）
+        string regionProtect = Config.RegionBuild ? "区域保护:是 " : "";
+        mess.AppendLine($"{regionProtect}区域范围:[c/61BCE3:{Config.Range}]格".Trim());
 
         // 药水剩余时间
         if (data.CratePotionTime > DateTime.UtcNow)
@@ -478,11 +498,8 @@ internal class MyCommand
         plr.SendMessage(TextGradient($"环境 {envStr}"), color);
         plr.SendMessage(TextGradient($"鱼池 {data.LiqName} [c/61BFE2:{data.MaxLiq}] 格 渔力 {basePower}({luckText})"), color);
 
-        if (data.SupChest)
-        {
-            string outInfo = data.OutChest != -1 ? $"输出箱:[c/ED756F:{data.OutChest}]" : "未设输出箱";
-            plr.SendMessage(TextGradient($"传输模式:已开启 {outInfo}"), color);
-        }
+        if (data.OutChest != -1)
+            plr.SendMessage(TextGradient($"传输 [c/ED756F:{data.OutChest}]"), color);
 
         // 区域增益
         if (!string.IsNullOrEmpty(customBuff))

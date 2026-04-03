@@ -81,7 +81,11 @@ internal class DataManager
     {
         if (!Directory.Exists(CacheDir))
         {
-            Clear();
+            // 目录不存在：清空内存数据（无需删除物理目录）
+            Machines.Clear();
+            MachByPos.Clear();
+            MachByChest.Clear();
+            MachByRegName.Clear();
             return;
         }
 
@@ -93,11 +97,8 @@ internal class DataManager
             try
             {
                 var data = JsonConvert.DeserializeObject<MachData>(File.ReadAllText(file));
-
-                // 仅加载当前世界的机器，其他世界文件跳过不删除
                 if (data?.WorldId != Main.worldID.ToString())
                     continue;
-
                 newMachines.Add(data);
             }
             catch (Exception ex)
@@ -106,7 +107,23 @@ internal class DataManager
             }
         }
 
+        // 清空现有字典
+        MachByPos.Clear();
+        MachByChest.Clear();
+        MachByRegName.Clear();
+
+        // 赋值新列表
         Machines = newMachines;
+
+        // 重建字典映射
+        foreach (var data in Machines)
+        {
+            MachByPos[data.Pos] = data;
+            if (data.ChestIndex != -1)
+                MachByChest[data.ChestIndex] = data;
+            if (!string.IsNullOrEmpty(data.RegName))
+                MachByRegName[data.RegName] = data;
+        }
     }
     #endregion
 
