@@ -123,6 +123,18 @@ internal class DataManager
                 MachByChest[data.ChestIndex] = data;
             if (!string.IsNullOrEmpty(data.RegName))
                 MachByRegName[data.RegName] = data;
+
+            foreach (var kv in data.Custom)
+            {
+                if (kv.Value.Expiry.Kind != DateTimeKind.Utc)
+                    kv.Value.Expiry = DateTime.SpecifyKind(kv.Value.Expiry, DateTimeKind.Utc);
+            }
+            foreach (var kv in data.ActiveZoneBuffs)
+            {
+                if (kv.Value.Kind != DateTimeKind.Utc)
+                    data.ActiveZoneBuffs[kv.Key] = DateTime.SpecifyKind(kv.Value, DateTimeKind.Utc);
+            }
+
         }
     }
     #endregion

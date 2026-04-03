@@ -36,7 +36,7 @@ internal class MyCommand
                     if (plr.ActiveChest == -1)
                     {
                         plr.SetData("set", true);
-                        plr.SendMessage(TextGradient("请打开一个箱子作为自动钓鱼机...\n"), color);
+                        plr.SendMessage(TextGradient("\n请打开一个箱子作为自动钓鱼机...\n"), color);
                         return;
                     }
 
@@ -47,7 +47,7 @@ internal class MyCommand
                     if (data == null)
                         CreateData(plr, plr.ActiveChest, pos);
                     else
-                        plr.SendMessage(TextGradient("该位置已有钓鱼机...\n"), color);
+                        plr.SendMessage(TextGradient("\n该位置已有钓鱼机...\n"), color);
                 }
                 break;
 
@@ -58,7 +58,8 @@ internal class MyCommand
                     var all = Machines;
                     if (all.Count == 0)
                     {
-                        plr.SendMessage($"没有自动钓鱼机", color);
+                        if(plr.RealPlayer) plr.SendMessage(TextGradient("没有自动钓鱼机"), color);
+                        else plr.SendMessage($"没有自动钓鱼机", color);
                         return;
                     }
 
@@ -104,13 +105,7 @@ internal class MyCommand
                         if (data.ZoneDungeon) env.Add("地牢");
                         if (data.RolledRemixOcean) env.Add("颠倒海洋");
 
-                        // 修复性能问题：缓存鱼竿和鱼饵类型
-                        int rodType = data.RodSlot != -1 ? Main.chest[data.ChestIndex]?.item[data.RodSlot]?.type ?? -1 : -1;
-                        string rodInfo = rodType > 0 ? $"鱼竿:{ItemIcon(rodType)}" : "鱼竿:无";
-
-                        int baitType = data.BaitSlot != -1 ? Main.chest[data.ChestIndex]?.item[data.BaitSlot]?.type ?? -1 : -1;
-                        int baitStack = baitType > 0 ? Main.chest[data.ChestIndex]?.item[data.BaitSlot]?.stack ?? 0 : 0;
-                        string baitInfo = baitType > 0 ? $"鱼饵:{ItemIcon(baitType, baitStack)}" : "鱼饵:无";
+                        var (rodInfo, baitInfo) = GetRodBaitInfo(data);
 
                         string line = $"{idx}.{data.Owner}的钓鱼机 [c/ED756F:{data.ChestIndex}] " +
                                      $"{rodInfo} {baitInfo}\n" +
@@ -197,7 +192,7 @@ internal class MyCommand
                         }
 
                         TPHelp(plr, all);
-                        plr.SendMessage(TextGradient("\n使用方法: /afm tp 编号"), color);
+                        plr.SendMessage(TextGradient("使用方法: /afm tp 编号"), color);
                         plr.SendMessage(TextGradient("传输出箱: /afm tp 编号 [c/FF8374:c]\n"), color);
                         return;
                     }
@@ -220,45 +215,43 @@ internal class MyCommand
                     {
                         if (data.OutChest == -1)
                         {
-                            plr.SendErrorMessage("该钓鱼机未设置输出箱");
+                            plr.SendErrorMessage("\n该钓鱼机未设置输出箱");
                             return;
                         }
                         var outChest = Main.chest[data.OutChest];
                         if (outChest == null)
                         {
-                            plr.SendErrorMessage("输出箱已不存在");
+                            plr.SendErrorMessage("\n输出箱已不存在");
                             return;
                         }
                         // 传送到输出箱位置（箱子中心偏左上方一格）
                         if (plr.Teleport(outChest.x * 16 - 8, outChest.y * 16 - 8))
-                            plr.SendMessage(TextGradient($"已传送到钓鱼机 [c/ED756F:{chestIdx}] 的输出箱位置"), color);
+                            plr.SendMessage(TextGradient($"\n已传送到输出箱位置: [c/ED756F:{chestIdx}]"), color);
                     }
                     else
                     {
                         // 传送到主箱位置
                         if (plr.Teleport(data.Pos.X * 16 - 8, data.Pos.Y * 16 - 8))
-                            plr.SendMessage(TextGradient($"已传送到钓鱼机 [c/ED756F:{chestIdx}] 位置"), color);
+                            plr.SendMessage(TextGradient($"\n已传送到钓鱼机位置: [c/ED756F:{chestIdx}]"), color);
                     }
                 }
                 break;
 
+            case "o":
             case "out":
+            case "sc":
             case "输出":
                 {
                     if (!plr.RealPlayer) return;
-
-                    // 检查传输模式全局开关
                     if (!Config.TransferMode && !IsAdmin(plr))
                     {
                         plr.SendMessage(TextGradient("传输模式已被管理员禁用"), color);
                         return;
                     }
-
-                    // 移除上次数据
+                    // 移除上次临时数据（如果有）
                     if (plr.ContainsData("out"))
                         plr.RemoveData("out");
 
-                    // 必须站在钓鱼机区域内
                     if (plr.CurrentRegion == null || !IsAfmRegion(plr.CurrentRegion.Name))
                     {
                         plr.SendMessage(TextGradient("请前往需要[c/F5FC73:开启传输模式]钓鱼机区域"), color);
@@ -269,21 +262,59 @@ internal class MyCommand
                     var data = FindRegion(plr.CurrentRegion.Name);
                     if (data == null)
                     {
-                        plr.SendMessage(TextGradient("未找到钓鱼机数据"), color);
+                        plr.SendMessage(TextGradient("\n未找到钓鱼机数据"), color);
                         return;
                     }
 
-                    // 如果开启了区域保护，检查权限（管理员或所有者）
                     if (Config.RegionBuild && !IsAdmin(plr) && data.Owner != plr.Name)
                     {
-                        plr.SendMessage(TextGradient($"你没有权限修改 {data.Owner}钓鱼机 传输模式"), color);
+                        plr.SendMessage(TextGradient($"\n你没有权限修改 {data.Owner}钓鱼机 传输模式"), color);
                         return;
                     }
 
-                    // 清空动画队列，避免播放过时动画
+                    // 如果已有输出箱，则关闭传输模式
+                    if (data.OutChest != -1)
+                    {
+                        data.OutChest = -1;
+                        data.ClearAnim();
+                        Save(data);
+                        plr.SendMessage(TextGradient($"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 传输模式已关闭"), color);
+                        return;
+                    }
+
+                    // 未设置输出箱，检查当前是否已打开箱子
+                    int activeChest = plr.ActiveChest;
+                    if (activeChest != -1)
+                    {
+                        var chest = Main.chest[activeChest];
+                        if (chest != null)
+                        {
+                            // 检查输出箱是否指向自身
+                            if (activeChest == data.ChestIndex)
+                            {
+                                plr.SendMessage(TextGradient($"\n不能将钓鱼机设为输出箱"), color);
+                                return;
+                            }
+
+                            // 检查输出箱是否也是另一台钓鱼机的主箱
+                            if (FindChest(activeChest) != null)
+                            {
+                                plr.SendMessage(TextGradient($"\n输出箱不能是另一台钓鱼机"), color);
+                                return;
+                            }
+
+                            data.ClearAnim();
+                            data.OutChest = activeChest;
+                            Save(data);
+                            plr.SendMessage(TextGradient($"\n已设置 [c/ED756F:{data.ChestIndex}] 输出箱"), color);
+                            return;
+                        }
+                    }
+
+                    // 未打开箱子，则进入等待模式
                     data.ClearAnim();
                     plr.SetData("out", data.ChestIndex);
-                    plr.SendMessage(TextGradient("请打开[c/F5FC73:任意箱子]作为输出箱"), color);
+                    plr.SendMessage(TextGradient("\n请打开[c/F5FC73:任意箱子]作为输出箱"), color);
                 }
                 break;
 
@@ -356,7 +387,7 @@ internal class MyCommand
             var mess = new StringBuilder();
             mess.AppendLine($"/{afm} s - 将箱子设为钓鱼机");
             mess.AppendLine($"/{afm} tp - 传送到指定钓鱼机");
-            mess.AppendLine($"/{afm} out - 跨区域传输模式");
+            mess.AppendLine($"/{afm} o - 跨区域传输模式");
             mess.AppendLine($"/{afm} if - 获取钓鱼机信息");
             mess.AppendLine($"/{afm} sv - 同步更新钓鱼机");
             mess.AppendLine($"/{afm} ls - 列出所有钓鱼机");
@@ -1124,7 +1155,6 @@ internal class MyCommand
         if (!string.IsNullOrEmpty(missingText))
         {
             plr.SendMessage(TextGradient(missingText), color);
-            plr.SendMessage(TextGradient($"[c/FF6352:注:]异常时解决[c/F1FA51:以上]问题自动恢复"), color);
         }
     }
 
@@ -1185,20 +1215,22 @@ internal class MyCommand
     {
         var idx = 1;
         var sb = new StringBuilder();
-        sb.AppendLine("\n可传送的钓鱼机：");
+        sb.AppendLine("\n[可传送的钓鱼机]");
         foreach (var m in all)
         {
             var outMod = m.OutChest != -1 ? $"[c]" : string.Empty;
-            sb.Append($"{idx}.{m.Owner}的钓鱼机 [c/ED756F:{m.ChestIndex}] {outMod}");
-
             // 显示缺失项（如果有）
             string miss = GetMissItems(m);
             if (!string.IsNullOrEmpty(miss))
             {
                 if (string.IsNullOrEmpty(outMod))
-                    sb.AppendLine($" {miss}");
-                else sb.AppendLine($"\n{miss}");
+                    outMod += miss;
+                else outMod += ($"\n{miss}");
             }
+
+            sb.Append($"{idx}.{m.Owner}的钓鱼机 [c/ED756F:{m.ChestIndex}] {outMod}\n");
+
+
             idx++;
         }
         plr.SendMessage(TextGradient(sb.ToString()), color);

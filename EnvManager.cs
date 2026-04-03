@@ -282,7 +282,7 @@ public static class EnvManager
             // 箱子已不存在或移动，删除区域和机器数据
             TShock.Regions.DeleteRegion(data.RegName);
             DataManager.Remove(data.Pos);
-            Msg = $"钓鱼机 [c/ED756F:{data.ChestIndex}] 已不存在，已删除无效区域。";
+            Msg = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 已不存在，已删除无效区域。";
             return false;
         }
 
@@ -293,13 +293,13 @@ public static class EnvManager
             int left, top, w, h;
             if (IsOverlap(data.Pos, data.WorldId, "重建", out left, out top, out w, out h, data.RegName))
             {
-                Msg = $"钓鱼机 [c/ED756F:{data.ChestIndex}] 区域重建失败，区域重叠。";
+                Msg = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 区域重建失败，区域重叠。";
                 return false;
             }
 
             if (!TShock.Regions.AddRegion(left, top, w, h, data.RegName, data.Owner, data.WorldId, 0))
             {
-                Msg = $"钓鱼机 [c/ED756F:{data.ChestIndex}] 区域重建失败。";
+                Msg = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 区域重建失败。";
                 return false;
             }
             TShock.Regions.SetRegionState(data.RegName, Config.RegionBuild);
@@ -311,7 +311,7 @@ public static class EnvManager
         int rangeSq = Config.ZoneRange * Config.ZoneRange;
         if (dx * dx + dy * dy > rangeSq)
         {
-            Msg = $"距离钓鱼机过远，需在 {Config.ZoneRange} 格内，请靠近后再同步。";
+            Msg = $"\n距离钓鱼机过远,需在 {Config.ZoneRange} 格内，请靠近后再同步。";
             return false;
         }
 
@@ -332,14 +332,15 @@ public static class EnvManager
         if (data == null)
         {
             TShock.Regions.DeleteRegion(plr.CurrentRegion.Name);
-            plr.SendMessage(TextGradient($"数据丢失，已删除无效区域 {plr.CurrentRegion.Name}"), color);
+            plr.SendMessage(TextGradient($"\n数据丢失，已删除无效区域 {plr.CurrentRegion.Name}"), color);
             return false;
         }
 
         if (ValidateSync(plr, data, out string error))
         {
             UpdateData(data, plr);
-            plr.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 数据已同步"), color);
+            UpdateRegions(data);
+            plr.SendMessage(TextGradient($"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 数据已同步"), color);
             return true;
         }
         else
@@ -348,7 +349,7 @@ public static class EnvManager
             if (error.Contains("距离"))
             {
                 plr.SetData("sync", true);
-                plr.SendMessage(TextGradient("请打开要同步数据的钓鱼机箱子..."), color);
+                plr.SendMessage(TextGradient("\n请打开要同步数据的钓鱼机箱子..."), color);
             }
             else
             {
@@ -369,11 +370,11 @@ public static class EnvManager
             if (region != null && IsAfmRegion(region.Name) && FindRegion(region.Name) == null)
             {
                 TShock.Regions.DeleteRegion(region.Name);
-                plr.SendMessage(TextGradient($"数据丢失，已删除无效区域 {region.Name}"), color);
+                plr.SendMessage(TextGradient($"\n数据丢失，已删除无效区域 {region.Name}"), color);
             }
             else
             {
-                plr.SendErrorMessage("该位置没有钓鱼机");
+                plr.SendErrorMessage("\n该位置没有钓鱼机");
             }
             return;
         }
@@ -381,8 +382,9 @@ public static class EnvManager
         if (ValidateSync(plr, data, out string error))
         {
             UpdateData(data, plr);
-            plr.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 数据已同步"), color);
-            plr.SendMessage(TextGradient($"如果环境错误,请[c/75D1FF:打开一次]钓鱼箱"), color);
+            UpdateRegions(data);
+            plr.SendMessage(TextGradient($"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 数据已同步"), color);
+            plr.SendMessage(TextGradient($"如果环境错误,请[c/75D1FF:打开一次]钓鱼箱\n"), color);
         }
         else
         {

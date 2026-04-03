@@ -21,7 +21,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     public static string PluginName => "自动钓鱼机";
     public override string Name => PluginName;
     public override string Author => "羽学";
-    public override Version Version => new(1, 1, 3);
+    public override Version Version => new(1, 1, 4);
     public override string Description => "使用/afm 指令指定一个箱子作为自动钓鱼机";
     #endregion
 
@@ -106,6 +106,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         for (int i = 0; i < span.Length; i++)
         {
             Save(span[i]);
+            span[i].ClearAnim();
         }
 
         LoadConfig();
@@ -246,17 +247,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                         break;
                     case AnimType.Transfer:
                         engine.PlayMove(req.item, req.from, req.toPos, req.skipFake);
-                        var chest = Main.chest[req.chestIdx];
-                        if (chest != null)
-                        {
-                            if (!AutoFishing.TryPutIntoChest(chest, req.item))
-                            {
-                                // 放入输出箱失败（满箱），回退到主箱
-                                var mainChest = Main.chest[req.data.ChestIndex];
-                                if (mainChest != null)
-                                    AutoFishing.TryPutIntoChest(mainChest, req.item);
-                            }
-                        }
+                        AutoFishing.PlaceFallback(req.item, req.chestIdx, req.data);
                         break;
                 }
                 data.AnimFrame = Timer + 60; // 每台机器独立计时
@@ -390,6 +381,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             // 1. 如果摧毁的是输出箱，先清除绑定
             if (idx != -1)
             {
+                var list = new List<string>();
                 foreach (var data in Machines)
                 {
                     if (data.OutChest == idx)
@@ -398,10 +390,13 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                         // 清空动画队列，避免播放过时动画
                         data.ClearAnim();
                         Save(data);
-                        TShock.Utils.Broadcast(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 的输出箱已被摧毁，传输模式已关闭"), color);
+                        list.Add("[c/ED756F:{data.ChestIndex}]");
                         break;
                     }
                 }
+
+                if (list.Count > 0)
+                    TSPlayer.All.SendMessage(TextGradient($"以下钓鱼机的输出箱已被摧毁,传输模式已关闭:\n{string.Join(",", list)}"), color);
             }
 
             // 2. 如果摧毁的是钓鱼机主箱子，移除整个钓鱼机
@@ -410,6 +405,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             {
                 machData.ClearAnim();
                 Remove(pos);
+                TSPlayer.All.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{machData.ChestIndex}] 已被摧毁"), color);
             }
         }
 
@@ -466,7 +462,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             var target = FindChest(chestIdx);
             if (target == null)
             {
-                plr.SendErrorMessage("未找到钓鱼机");
+                plr.SendMessage(TextGradient($"\n未找到钓鱼机"), color);
                 plr.RemoveData("out");
                 return;
             }
@@ -474,7 +470,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             // 检查输出箱是否指向自身
             if (c == target.ChestIndex)
             {
-                plr.SendErrorMessage("不能将输出箱设为自己");
+                plr.SendMessage(TextGradient($"\n不能将钓鱼机设为输出箱"), color);
                 plr.RemoveData("out");
                 return;
             }
@@ -482,18 +478,16 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             // 检查输出箱是否也是钓鱼机主箱（避免循环）
             if (FindChest(c) != null)
             {
-                plr.SendErrorMessage("输出箱不能是另一台钓鱼机");
+                plr.SendMessage(TextGradient($"\n输出箱不能是另一台钓鱼机"), color);
                 plr.RemoveData("out");
                 return;
             }
 
+            target.ClearAnim();
             target.OutChest = c;
             Save(target);
-            plr.SendMessage(TextGradient($"箱子 [c/ED756F:{c}] 已设为钓鱼机 [c/ED756F:{target.ChestIndex}] 的输出箱"), color);
+            plr.SendMessage(TextGradient($"\n已设置 [c/ED756F:{target.ChestIndex}] 输出箱"), color);
             plr.RemoveData("out");
-
-            // 立即转移物品
-            AutoFishing.TransferItem(target);
             return;
         }
 
@@ -503,7 +497,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             // 如果箱子没有连接电线，则提示
             if (Config.NeedWiring && !HasWiring(data.Pos))
             {
-                plr.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] [c/75D1FF:未连接]电线," +
+                plr.SendMessage(TextGradient($"\n钓鱼机 [c/ED756F:{data.ChestIndex}] [c/75D1FF:未连接]电线," +
                                              "\n连接电路与计时器后将自动启动"), color2);
                 return;
             }
@@ -525,7 +519,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                 if (TShock.Regions.AddRegion(left, top, w, h, RegionName, owner, worldId, 0))
                 {
                     TShock.Regions.SetRegionState(RegionName, Config.RegionBuild);
-                    TShock.Utils.Broadcast(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 区域已重建"), color);
+                    plr.SendMessage(TextGradient($"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 区域已重建"), color);
                 }
             }
 
@@ -572,7 +566,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         // 如果箱子没有连接电线，则提示
         if (Config.NeedWiring && !HasWiring(data.Pos))
         {
-            plr.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] [c/75D1FF:未连接]电线," +
+            plr.SendMessage(TextGradient($"\n钓鱼机 [c/ED756F:{data.ChestIndex}] [c/75D1FF:未连接]电线," +
                                          "\n连接电路与计时器后将自动启动"), color2);
             return;
         }
@@ -858,6 +852,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         };
 
         UpdateData(data, plr);
+        UpdateRegions(data);
         sw.Stop();
         TSPlayer.All.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 创建用时 {sw.ElapsedMilliseconds} ms"), color);
     }
@@ -897,10 +892,36 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     #endregion
 
     #region 更新区域大小与建筑保护
-    private static void UpdateRegions()
+    public static void UpdateRegions(MachData? mach = null)
     {
+        if (mach != null)
+        {
+            // 只更新指定的一台
+            if (string.IsNullOrEmpty(mach.RegName)) return;
+
+            Point pos = mach.Pos;
+            int left, top, w, h;
+            string regionName = mach.RegName;
+            string worldId = Main.worldID.ToString();
+
+            // 更新建筑保护
+            TShock.Regions.SetRegionState(regionName, Config.RegionBuild);
+
+            // 重叠检查
+            if (IsOverlap(pos, worldId, "更新", out left, out top, out w, out h, regionName))
+                return;
+
+            // 更新区域范围
+            if (TShock.Regions.PositionRegion(regionName, left, top, w, h))
+            {
+                TSPlayer.All.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{mach.ChestIndex}] 区域已更新"), color);
+            }
+            return;
+        }
+
         var all = Machines;
-        var span = CollectionsMarshal.AsSpan(all);
+        Span<MachData> span = CollectionsMarshal.AsSpan(all);
+        var list = new List<string>();
         for (int i = 0; i < span.Length; i++)
         {
             ref var data = ref span[i];
@@ -923,9 +944,13 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             // 更新区域范围大小
             if (TShock.Regions.PositionRegion(RegionName, left, top, w, h))
             {
-                TSPlayer.All.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 区域已更新"), color);
+
+                list.Add($"[c/ED756F:{data.ChestIndex}]");
             }
         }
+
+        if (list.Count > 0)
+            TSPlayer.All.SendMessage(TextGradient($"钓鱼机区域已更新:{string.Join(",", list)}"), color);
     }
     #endregion
 

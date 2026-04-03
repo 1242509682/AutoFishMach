@@ -274,6 +274,7 @@ public class AutoFishing
             var item = chest.item[slot];
             if (item != null && !item.IsAir && item.type == type)
             {
+                int idx = slot; // 保存原槽位
                 // 消耗一瓶
                 item.stack--;
                 if (item.stack <= 0)
@@ -281,7 +282,7 @@ public class AutoFishing
                     item.TurnToAir();
                     slot = -1;  // 清除缓存
                 }
-                NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, slot);
+                NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, idx);
                 Time = DateTime.UtcNow.AddMinutes(Min);
 
                 // 有人就播报
@@ -344,6 +345,7 @@ public class AutoFishing
             var item = chest.item[slot];
             if (item != null && !item.IsAir && item.type == UsedItem.ItemType)
             {
+                int idx = slot; // 保存原槽位
                 // 消耗一瓶
                 item.stack--;
                 if (item.stack <= 0)
@@ -351,7 +353,7 @@ public class AutoFishing
                     item.TurnToAir();
                     slot = -1;
                 }
-                NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, slot);
+                NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, idx);
                 expiry = DateTime.UtcNow.AddMinutes(UsedItem.Minutes);
                 bonus = UsedItem.Power;
 
@@ -716,61 +718,6 @@ public class AutoFishing
     }
     #endregion
 
-    #region 预检查输出箱空间
-    private static bool HasRoomInChest(Chest chest, Item item)
-    {
-        var items = chest.item.AsSpan();
-        bool hasSlot = false;
-        for (int i = 0; i < items.Length; i++)
-        {
-            var slotItem = items[i];
-            if (slotItem != null && !slotItem.IsAir)
-            {
-                if (slotItem.type == item.type && slotItem.stack < slotItem.maxStack)
-                    return true; // 找到可堆叠的同种物品，立即返回
-            }
-            else
-            {
-                hasSlot = true; // 标记存在空位，但继续遍历以防有可堆叠物品
-            }
-        }
-        return hasSlot; // 没有可堆叠物品，但有空位则返回 true
-    }
-    #endregion
-
-    #region 物品放入箱子方法
-    public static bool TryPutIntoChest(Chest chest, Item item)
-    {
-        var items = chest.item.AsSpan();
-        int slot = -1;
-        for (int s = 0; s < items.Length; s++)
-        {
-            ref var slotItem = ref items[s];
-            if (slotItem != null && !slotItem.IsAir)
-            {
-                if (slotItem.type == item.type && slotItem.stack < slotItem.maxStack)
-                {
-                    slotItem.stack++;
-                    NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, s);
-                    return true;
-                }
-            }
-            else if (slot == -1)
-            {
-                slot = s;
-            }
-        }
-
-        if (slot != -1)
-        {
-            items[slot] = item.Clone();
-            NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, slot);
-            return true;
-        }
-        return false;
-    } 
-    #endregion
-
     #region 动画执行队列方法
     private void AddMove(Item item, Vector2 from, Point toPos, bool skipFake)
     {
@@ -892,7 +839,7 @@ public class AutoFishing
     #region 判断物品是否为钓鱼机必备物品
     public static bool SafeItem(Item item, MachData data)
     {
-        if (item == null || item.IsAir || item.IsACoin) return false;
+        if (item == null || item.IsAir) return false;
 
         // 鱼竿
         if (item.fishingPole > 0) return true;
@@ -919,11 +866,44 @@ public class AutoFishing
     }
     #endregion
 
+    #region 预检查输出箱空间
+    private static bool HasRoomInChest(Chest chest, Item item)
+    {
+        if (item.type >= ItemID.CopperCoin && item.type <= ItemID.PlatinumCoin)
+            return true; // 钱币不预判，让 TryPutCoinIntoChest 自己判断
+
+        var items = chest.item.AsSpan();
+        int need = item.stack;
+        int AirSlot = 0;
+
+        for (int i = 0; i < items.Length; i++)
+        {
+            ref var slot = ref items[i];
+            if (!slot.IsAir)
+            {
+                if (slot.type == item.type && slot.stack < slot.maxStack)
+                {
+                    int canTake = slot.maxStack - slot.stack;
+                    if (canTake >= need) return true;
+                    need -= canTake;
+                }
+            }
+            else
+            {
+                AirSlot++;
+            }
+        }
+
+        // 剩余需要占用的格子数（每个空位最多放 maxStack 个）
+        return AirSlot >= (need + item.maxStack - 1) / item.maxStack;
+    }
+    #endregion
+
     #region 将主箱子中的非必备物品转移到输出箱
     public static void TransferItem(MachData data)
     {
         if (data.OutChest == -1) return;
-        if (data.ChestIndex == data.OutChest) return; // 输出箱就是主箱，避免自身转移
+        if (data.ChestIndex == data.OutChest) return;
 
         var mainChest = Main.chest[data.ChestIndex];
         var outChest = Main.chest[data.OutChest];
@@ -933,17 +913,28 @@ public class AutoFishing
         var items = mainChest.item.AsSpan();
         for (int i = 0; i < items.Length; i++)
         {
-            var item = items[i];
-            if (item == null || item.IsAir || item.IsACoin) continue;
+            ref var item = ref items[i];
+            if (item == null || item.IsAir) continue;
             if (SafeItem(item, data)) continue;
 
-            // 尝试放入输出箱
+            // 预判输出箱是否有空间
+            if (!HasRoomInChest(outChest, item)) continue;
+
+            int oldType = item.type;
+            int oldStack = item.stack;
             if (TryPutIntoChest(outChest, item))
             {
-                name.Add(ItemIcon(item.type, item.stack));
-                // 清空原格子
-                item.TurnToAir();
-                NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, data.ChestIndex, i);
+                int moved = oldStack - item.stack;
+                if (moved > 0)
+                {
+                    bool isCoin = oldType >= ItemID.CopperCoin && oldType <= ItemID.PlatinumCoin;
+                    if (!isCoin)
+                        name.Add(ItemIcon(oldType, moved));
+
+                    if (item.stack == 0)
+                        item.TurnToAir();
+                    NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, data.ChestIndex, i);
+                }
             }
         }
 
@@ -958,4 +949,196 @@ public class AutoFishing
     }
     #endregion
 
+    #region 物品放入箱子方法
+    public static bool TryPutIntoChest(Chest chest, Item item)
+    {
+        if (item.IsAir) return false;
+
+        // 钱币特殊处理（自动兑换）
+        if (item.type >= ItemID.CopperCoin && item.type <= ItemID.PlatinumCoin)
+            return TryPutCoinIntoChest(chest, item);
+
+        var items = chest.item.AsSpan();
+        int orig = item.stack; // 原始数量
+        int remain = orig; // 剩余待转移数量
+        Span<int> free = stackalloc int[items.Length];
+        int freeCnt = 0;
+
+        for (int i = 0; i < items.Length && remain > 0; i++)
+        {
+            ref var slot = ref items[i];
+            if (!slot.IsAir && slot.type == item.type && slot.stack < slot.maxStack)
+            {
+                int canTake = slot.maxStack - slot.stack;
+                int take = Math.Min(remain, canTake);
+                slot.stack += take;
+                remain -= take;
+                NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, i);
+            }
+            else if (slot.IsAir)
+            {
+                free[freeCnt++] = i;
+            }
+        }
+
+        if (remain > 0 && freeCnt > 0)
+        {
+            int slotIdx = 0;
+            while (remain > 0 && slotIdx < freeCnt)
+            {
+                int take = Math.Min(remain, item.maxStack);
+                int slot = free[slotIdx++];
+                items[slot] = item.Clone();
+                items[slot].stack = take;
+                items[slot].prefix = 0;   // 重置前缀
+                NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, slot);
+                remain -= take;
+            }
+        }
+
+        // 更新原物品
+        bool success = remain < orig;
+        item.stack = remain;
+        if (item.stack == 0) item.TurnToAir();
+        return success;
+    }
+    #endregion
+
+    #region 转移钱币方法
+    private static bool TryPutCoinIntoChest(Chest chest, Item coin)
+    {
+        if (coin.type < ItemID.CopperCoin || coin.type > ItemID.PlatinumCoin) return false;
+
+        Span<Item> items = chest.item.AsSpan();
+        long total = 0;
+        int freeCnt = 0;
+        int coinSlotCnt = 0;
+
+        // 统计箱内钱币总值
+        for (int i = 0; i < items.Length; i++)
+        {
+            ref Item it = ref items[i];
+            if (it.IsAir)
+            {
+                freeCnt++;
+                continue;
+            }
+            if (it.type >= ItemID.CopperCoin && it.type <= ItemID.PlatinumCoin)
+            {
+                coinSlotCnt++;
+                total += it.type switch
+                {
+                    ItemID.CopperCoin => it.stack,
+                    ItemID.SilverCoin => (long)it.stack * 100,
+                    ItemID.GoldCoin => (long)it.stack * 10000,
+                    ItemID.PlatinumCoin => (long)it.stack * 1000000,
+                    _ => 0
+                };
+            }
+        }
+
+        // 加上要存入的钱币
+        total += coin.type switch
+        {
+            ItemID.CopperCoin => coin.stack,
+            ItemID.SilverCoin => (long)coin.stack * 100,
+            ItemID.GoldCoin => (long)coin.stack * 10000,
+            ItemID.PlatinumCoin => (long)coin.stack * 1000000,
+            _ => 0
+        };
+
+        int[] cnts = Terraria.Utils.CoinsSplit(total); // [铜,银,金,铂]
+        int need = 0;
+        for (int i = 0; i < 4; i++)
+            if (cnts[i] > 0)
+                need += (cnts[i] + 9999 - 1) / 9999;
+
+        if (freeCnt + coinSlotCnt < need) return false;
+
+        // 清空所有钱币格子
+        for (int i = 0; i < items.Length; i++)
+        {
+            ref Item it = ref items[i];
+            if (it.type >= ItemID.CopperCoin && it.type <= ItemID.PlatinumCoin)
+            {
+                it.TurnToAir();
+                NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, i);
+            }
+        }
+
+        int[] ids = { ItemID.CopperCoin, ItemID.SilverCoin, ItemID.GoldCoin, ItemID.PlatinumCoin };
+        int slot = 0;
+        for (int t = 0; t < 4; t++)
+        {
+            int rem = cnts[t];
+            while (rem > 0)
+            {
+                while (slot < items.Length && !items[slot].IsAir) slot++;
+                if (slot >= items.Length) return false;
+                int take = Math.Min(rem, 9999);
+                items[slot].SetDefaults(ids[t]);
+                items[slot].stack = take;
+                NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, slot);
+                rem -= take;
+                slot++;
+            }
+        }
+
+        coin.TurnToAir();
+        return true;
+    }
+    #endregion
+
+    #region 将物品存入箱子，失败时依次尝试主箱、区域内其他箱子、掉落地面
+    /// <summary>
+    /// 将物品存入箱子，失败时依次尝试主箱、区域内其他箱子、掉落地面
+    /// </summary>
+    /// <param name="item">要存入的物品（会被修改）</param>
+    /// <param name="targetChestIdx">优先尝试的目标箱子索引（如输出箱）</param>
+    /// <param name="data">钓鱼机数据（提供主箱索引、区域名、坐标等）</param>
+    /// <returns>是否成功放置（掉落地面也算成功，物品已消失）</returns>
+    public static bool PlaceFallback(Item item, int targetChestIdx, MachData data)
+    {
+        if (item == null || item.IsAir) return true;
+
+        // 1. 尝试放入目标箱子
+        var targetChest = Main.chest[targetChestIdx];
+        if (targetChest != null && TryPutIntoChest(targetChest, item))
+            return true;
+
+        // 2. 回退到主箱
+        var mainChest = Main.chest[data.ChestIndex];
+        if (mainChest != null && TryPutIntoChest(mainChest, item))
+            return true;
+
+        // 3. 尝试区域内其他箱子
+        var region = TShock.Regions.GetRegionByName(data.RegName);
+        if (region != null)
+        {
+            var chests = Main.chest.AsSpan();
+            for (int i = 0; i < chests.Length; i++)
+            {
+                var other = chests[i];
+                if (other == null) continue;
+                if (i == data.ChestIndex) continue;  // 跳过主箱
+                if (i == targetChestIdx) continue;   // 跳过目标箱
+                if (!region.Area.Contains(other.x, other.y)) continue;
+                if (TryPutIntoChest(other, item))
+                    return true;
+            }
+        }
+
+        // 4. 最终掉落地面
+        int dropX = data.Pos.X * 16 + 8;
+        int dropY = data.Pos.Y * 16 + 8;
+        int idx = Item.NewItem(null, new Vector2(dropX, dropY), Vector2.Zero, item.type, item.stack);
+        if (data.RegionPlayers.Count > 0)
+        {
+            foreach (var plr in data.RegionPlayers)
+                plr.SendData(PacketTypes.UpdateItemDrop, null, idx);
+        }
+        item.TurnToAir();
+        return true;
+    }
+    #endregion
 }
