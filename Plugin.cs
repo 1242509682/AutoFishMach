@@ -2,6 +2,7 @@
 using System.Runtime.InteropServices;
 using Microsoft.Xna.Framework;
 using Terraria;
+using Terraria.GameContent.Drawing;
 using Terraria.GameContent.FishDropRules;
 using Terraria.ID;
 using TerrariaApi.Server;
@@ -20,7 +21,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     public static string PluginName => "自动钓鱼机";
     public override string Name => PluginName;
     public override string Author => "羽学";
-    public override Version Version => new(1, 1, 1);
+    public override Version Version => new(1, 1, 2);
     public override string Description => "使用/afm 指令指定一个箱子作为自动钓鱼机";
     #endregion
 
@@ -178,6 +179,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
 
     #region 游戏更新事件（主要触发器）
     public static long Timer = 0; // 帧计数器（每次游戏更新+1）
+    public static readonly HashSet<MachData> ActiveAnim = new(); // 存储当前有待处理动画的机器
     private void OnGameUpdate(EventArgs args)
     {
         if (!Config.Enabled) return;
@@ -187,7 +189,6 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         // 无电路模式：使用游戏更新事件自动定时执行
         if (!Config.NeedWiring)
         {
-            // 优化：使用索引访问而不是foreach，减少迭代开销
             var all = Machines;
             var span = CollectionsMarshal.AsSpan(all);
             for (int i = 0; i < span.Length; i++)
@@ -216,6 +217,45 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                 (data.Engine ?? (data.Engine = new AutoFishing(data))).Execute();
                 maxCount++;
             }
+        }
+
+        // 处理动画：每台机器独立
+        var snapshot = ActiveAnim.ToList();
+        foreach (var data in snapshot)
+        {
+            // 如果开启无人关闭且区域内无玩家，则清空动画队列并跳过处理
+            if (Config.AutoStopWhenEmpty && data.RegionPlayers.Count == 0)
+            {
+                if (data.AnimQueue.Count > 0)
+                    data.ClearAnim();
+                continue;
+            }
+
+            if (data.AnimQueue.Count > 0 && Timer >= data.AnimFrame)
+            {
+                var req = data.AnimQueue.Dequeue();
+                var engine = data.Engine ?? (data.Engine = new AutoFishing(data));
+                switch (req.Type)
+                {
+                    case AnimType.Move:
+                        engine.PlayMove(req.item, req.from, req.toPos, req.skipFake);
+                        break;
+                    case AnimType.Sparkle:
+                        engine.PlaySparkle(req.toPos);
+                        break;
+                    case AnimType.Transfer:
+                        engine.PlayMove(req.item, req.from, req.toPos, req.skipFake);
+                        var chest = Main.chest[req.chestIdx];
+                        if (chest != null)
+                            AutoFishing.TryPutIntoChest(chest, req.item);
+                        break;
+                }
+                data.AnimFrame = Timer + 60; // 每台机器独立计时
+            }
+
+            // 如果队列为空，从活跃集合中移除
+            if (data.AnimQueue.Count == 0)
+                ActiveAnim.Remove(data);
         }
     }
 
@@ -272,7 +312,10 @@ public class Plugin(Main game) : TerrariaPlugin(game)
 
         // 恢复液体自动检测
         if (data.LiqDead)
+        {
             data.LiqDead = false;
+            data.AnimFrame = 0; // 重置动画计时
+        }
 
         // 同步环境（生物群落、幸运值等）
         if ((DateTime.UtcNow - data.LastZoneUpdate).TotalSeconds >= 10)
@@ -296,7 +339,10 @@ public class Plugin(Main game) : TerrariaPlugin(game)
 
         // 恢复液体自动检测
         if (data.LiqDead)
+        {
             data.LiqDead = false;
+            data.AnimFrame = 0; // 重置动画计时
+        }
     }
 
     private void OnNewProjectile(object? sender, NewProjectileEventArgs e)
@@ -316,7 +362,10 @@ public class Plugin(Main game) : TerrariaPlugin(game)
 
         // 恢复液体自动检测
         if (data.LiqDead)
+        {
             data.LiqDead = false;
+            data.AnimFrame = 0; // 重置动画计时
+        }
     }
     #endregion
 
@@ -325,12 +374,38 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     {
         if (Config.Enabled)
         {
-            var pos = new Point(x, y);
-            var data = DataManager.FindTile(pos);
-            if (data != null)
-                DataManager.Remove(pos);
+            // 使用 Chest.FindChest 获取箱子索引
+            int idx = Chest.FindChest(x, y);
+            Point pos = new Point(x, y);
+
+            // 1. 如果摧毁的是输出箱，先清除绑定
+            if (idx != -1)
+            {
+                foreach (var data in Machines)
+                {
+                    if (data.OutChest == idx)
+                    {
+                        data.OutChest = -1;
+                        data.SupChest = false;
+                        // 清空动画队列，避免播放过时动画
+                        data.ClearAnim();
+                        Save(data);
+                        TShock.Utils.Broadcast(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 的输出箱已被摧毁，传输模式已关闭"), color);
+                        break;
+                    }
+                }
+            }
+
+            // 2. 如果摧毁的是钓鱼机主箱子，移除整个钓鱼机
+            var machData = FindTile(pos);
+            if (machData != null)
+            {
+                machData.ClearAnim();
+                Remove(pos);
+            }
         }
 
+        // 最后执行原方法，真正摧毁 tile
         orig(x, y, fail, effectOnly, noItem);
     }
     #endregion
@@ -376,6 +451,44 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             return;
         }
 
+        // 设置输出箱
+        if (plr.GetData<int>("out") is int chestIdx && chestIdx != 0)
+        {
+            var target = FindChest(chestIdx);
+            if (target == null)
+            {
+                plr.SendErrorMessage("未找到钓鱼机");
+                plr.RemoveData("out");
+                return;
+            }
+
+            // 检查输出箱是否指向自身
+            if (c == target.ChestIndex)
+            {
+                plr.SendErrorMessage("不能将输出箱设为自己");
+                plr.RemoveData("out");
+                return;
+            }
+
+            // 检查输出箱是否也是钓鱼机主箱（避免循环）
+            if (FindChest(c) != null)
+            {
+                plr.SendErrorMessage("输出箱不能是另一台钓鱼机");
+                plr.RemoveData("out");
+                return;
+            }
+
+            target.OutChest = c;
+            target.SupChest = true;
+            Save(target);
+            plr.SendMessage(TextGradient($"箱子 [c/ED756F:{c}] 已设为钓鱼机 [c/ED756F:{target.ChestIndex}] 的输出箱"), color);
+            plr.RemoveData("out");
+
+            // 立即转移物品
+            AutoFishing.TransferItem(target);
+            return;
+        }
+
         // 平时打开箱子 检查电线、检查区域存在、同步环境/物品/液体缓存
         if (data != null)
         {
@@ -397,7 +510,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                 string worldId = Main.worldID.ToString();
 
                 // 重叠检查
-                if (IsOverlap(pos, worldId, "重建", out left, out top, out w, out h,data.RegName))
+                if (IsOverlap(pos, worldId, "重建", out left, out top, out w, out h, data.RegName))
                     return;
 
                 // 创建区域
@@ -415,7 +528,10 @@ public class Plugin(Main game) : TerrariaPlugin(game)
 
             // 恢复液体自动检测
             if (data.LiqDead)
+            {
                 data.LiqDead = false;
+                data.AnimFrame = 0; // 重置动画计时
+            }
 
             EnvManager.SyncLiquid(data);
 
@@ -453,12 +569,11 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             return;
         }
 
-        // 如果液体不足导致机器暂停，玩家打开箱子时恢复检测
+        // 恢复液体自动检测
         if (data.LiqDead)
         {
             data.LiqDead = false;
-            plr.SendMessage(TextGradient($"鱼池液体不足[c/FF6352:已暂停]工作\n" +
-                                         $"正在尝试修复ing..."), color);
+            data.AnimFrame = 0; // 重置动画计时
         }
 
         // 更新环境
@@ -536,7 +651,11 @@ public class Plugin(Main game) : TerrariaPlugin(game)
 
         // 无人自动关闭检查
         if (Config.AutoStopWhenEmpty && data.RegionPlayers.Count == 0)
+        {
             plr.SendMessage(TextGradient($"检测到附近没有玩家自动关闭"), color);
+            // 清空动画队列
+            data.ClearAnim();
+        }
 
         Save(data);
     }
@@ -548,12 +667,12 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         var plr = TShock.Players[args.Who];
         if (plr == null || !IsAfmRegion(plr.CurrentRegion.Name)) return;
 
-        if (plr.GetData<bool>("set"))
-            plr.RemoveData("set");
-        if (plr.GetData<bool>("info"))
-            plr.RemoveData("info");
-        if (plr.GetData<bool>("sync"))
-            plr.RemoveData("sync");
+        if (plr.GetData<bool>("set")) plr.RemoveData("set");
+        if (plr.GetData<bool>("info")) plr.RemoveData("info");
+        if (plr.GetData<bool>("sync")) plr.RemoveData("sync");
+
+        if (plr.GetData<int>("out") is int chestIdx && chestIdx != 0)
+            plr.RemoveData("out");
 
         if (pend.ContainsKey(plr.Name))
             pend.Remove(plr.Name);
@@ -562,6 +681,13 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         if (data == null || plr.CurrentRegion.Name != data.RegName) return;
         if (data.RegionPlayers.Contains(plr))
             data.RegionPlayers.Remove(plr);
+
+        // 无人自动关闭检查
+        if (Config.AutoStopWhenEmpty && data.RegionPlayers.Count == 0)
+        {
+            // 清空动画队列
+            data.ClearAnim();
+        }
 
         Save(data);
     }

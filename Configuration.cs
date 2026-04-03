@@ -10,12 +10,14 @@ namespace FishMach;
 internal class Configuration
 {
     #region 配置项成员
-    [JsonProperty("自定渔获进度参考", Order = -10)]
+    [JsonProperty("自定渔获进度参考", Order = -11)]
     public List<string> Reference = new();
-    [JsonProperty("使用方法", Order = -9)]
+    [JsonProperty("使用方法", Order = -10)]
     public List<string> Text { get; set; } = new();
-    [JsonProperty("插件开关", Order = -8)]
+    [JsonProperty("插件开关", Order = -9)]
     public bool Enabled { get; set; } = true;
+    [JsonProperty("传输模式", Order = -8)]
+    public bool TransferMode { get; set; } = true;
     [JsonProperty("钓任务鱼", Order = -7)]
     public bool QuestFish { get; set; } = true;
     [JsonProperty("假鱼动画", Order = -6)]

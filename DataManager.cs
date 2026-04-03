@@ -8,7 +8,6 @@ namespace FishMach;
 
 internal class DataManager
 {
-
     // 缓存目录
     private static string CacheDir => Path.Combine(MainPath, "钓鱼机缓存");
 
@@ -116,6 +115,9 @@ internal class DataManager
         var data = FindTile(pos);
         if (data == null) return;
 
+        // 从动画活跃集合中移除
+        ActiveAnim.Remove(data);
+
         MachByPos.Remove(pos);
 
         if (!string.IsNullOrEmpty(data.RegName))
@@ -151,6 +153,7 @@ internal class DataManager
             }
         }
 
+        ActiveAnim.Clear(); // 清空动画活跃集合
         Machines.Clear();
         MachByPos.Clear();
         MachByChest.Clear();

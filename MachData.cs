@@ -2,10 +2,23 @@
 using Newtonsoft.Json;
 using Terraria;
 using TShockAPI;
+using static FishMach.Plugin;
 
 namespace FishMach;
 
 #region 机器数据
+// 动画请求
+public enum AnimType { Move, Sparkle, Transfer }
+public class AnimReq
+{
+    public AnimType Type;
+    public Item item;           // 需要转移的物品
+    public Vector2 from;        // 动画起点
+    public Point toPos;         // 目标箱子坐标（用于动画和定位）
+    public int chestIdx;        // 目标箱子索引
+    public bool skipFake;       // 是否跳过假鱼
+    public MachData data;
+}
 public class CustomState
 {
     [JsonProperty("名称")]
@@ -37,6 +50,10 @@ public class MachData
     public Point Pos { get; set; } = new Point();
     [JsonProperty("箱子索引")]
     public int ChestIndex { get; set; } = -1;
+    [JsonProperty("输入模式")]
+    public bool SupChest { get; set; } = false;   // true=输入模式（从主箱取物品）
+    [JsonProperty("输出箱")]
+    public int OutChest { get; set; } = -1;       // 输出箱索引，-1表示使用主箱
     [JsonProperty("神圣")]
     public bool ZoneHallow { get; set; }
     [JsonProperty("腐化")]
@@ -193,6 +210,20 @@ public class MachData
     public Queue<(int x, int y)> LiqQueue { get; set; } = new(); // BFS 队列
     [JsonIgnore]
     public DateTime LastZoneUpdate { get; set; } = DateTime.MinValue; // 环境同步冷却
+
+    // 动画队列和计时
+    [JsonIgnore]
+    public Queue<AnimReq> AnimQueue { get; set; } = new();
+    [JsonIgnore]
+    public long AnimFrame { get; set; } = 0;
+
+    // 清理动画队列方法
+    public void ClearAnim()
+    {
+        AnimQueue.Clear();
+        Plugin.ActiveAnim.Remove(this);
+        AnimFrame = 0;
+    }
 
     // 缓存NPC
     [JsonIgnore]

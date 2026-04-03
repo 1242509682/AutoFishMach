@@ -5,6 +5,7 @@ using Terraria.GameContent.Drawing;
 using Terraria.GameContent.FishDropRules;
 using Terraria.ID;
 using TShockAPI;
+using static FishMach.MachData;
 using static FishMach.Plugin;
 using static FishMach.Utils;
 
@@ -40,10 +41,11 @@ public class AutoFishing
             {
                 data.LiquidBroadcast = true;
                 data.LiqDead = true; // 标记液体已死，停止后续检测
-                var text = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 鱼池[c/FF716D:液体异常]\n" +
-                           $"传送 /tppos {data.Pos.X} {data.Pos.Y}";
-
+                var text = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 鱼池[c/FF716D:液体异常]\n";
                 TSPlayer.All.SendMessage(TextGradient(text), color);
+
+                // 清空动画队列，避免播放过时动画
+                data.ClearAnim();
             }
             return;
         }
@@ -57,8 +59,7 @@ public class AutoFishing
             if (!data.RodBroadcast)
             {
                 data.RodBroadcast = true;
-                var text = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 未找到[c/FF716D:鱼竿]\n" +
-                           $"传送 /tppos {data.Pos.X} {data.Pos.Y}";
+                var text = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 未找到[c/FF716D:鱼竿]\n";
                 TSPlayer.All.SendMessage(TextGradient(text), color);
             }
             return;
@@ -71,8 +72,7 @@ public class AutoFishing
             if (!data.BaitBroadcast)
             {
                 data.BaitBroadcast = true;
-                var text = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 未找到[c/FF716D:鱼饵]\n" +
-                           $"传送 /tppos {data.Pos.X} {data.Pos.Y}";
+                var text = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 未找到[c/FF716D:鱼饵]\n";
                 TSPlayer.All.SendMessage(TextGradient(text), color);
             }
             return;
@@ -639,47 +639,73 @@ public class AutoFishing
     private void PutToChest(Item item)
     {
         Vector2 from = new Vector2(data.LiqPos.X * 16 + 8, data.LiqPos.Y * 16 + 8);
-        Point pos = data.Pos;
-        int idx = data.ChestIndex;
-        var chest = Main.chest[idx];
-        if (chest == null) return;
+        bool queued = false;
 
-        // 尝试存入当前箱子
-        if (TryPutIntoChest(chest, item))
+        // 1. 传输模式
+        if (data.SupChest && data.OutChest != -1)
         {
-            SendEffects(item, from, new Point(chest.x, chest.y));
-            return;
-        }
-
-        // 当前箱子满，尝试区域内的其他箱子
-        var region = TShock.Regions.GetRegionByName(data.RegName);
-        if (region != null)
-        {
-            var chests = Main.chest.AsSpan();
-            for (int i = 0; i < chests.Length; i++)
+            var outChest = Main.chest[data.OutChest];
+            if (outChest != null)
             {
-                var other = chests[i];
-                if (other == null || other == chest) continue;
-
-                if (!region.Area.Contains(other.x, other.y) ||
-                    !TryPutIntoChest(other, item))
-                    continue;
-
-                SendEffects(item, from, new Point(other.x, other.y));
-                return;
+                var mainChest = Main.chest[data.ChestIndex];
+                // 飞到主箱（动画，无实际转移）
+                AddMove(item, from, new Point(mainChest.x, mainChest.y), skipFake: false);
+                AddSparkle(new Point(mainChest.x, mainChest.y));
+                // 实际转移到输出箱（动画 + 转移）
+                AddTransfer(item, new Vector2(mainChest.x * 16 + 8, mainChest.y * 16 + 8), new Point(outChest.x, outChest.y), outChest.index, skipFake: true);
+                AddSparkle(new Point(outChest.x, outChest.y));
+                queued = true;
             }
         }
 
-        // 都失败，掉落在地上
-        int dropX = data.Pos.X * 16 + 8;
-        int dropY = data.Pos.Y * 16 + 8;
-        int index = Item.NewItem(null, new Vector2(dropX, dropY), Vector2.Zero, item.type);
-        if (data.RegionPlayers.Count > 0)
-            foreach (var plr in data.RegionPlayers)
-                plr.SendData(PacketTypes.UpdateItemDrop, null, index);
+        // 2. 主箱子
+        if (!queued)
+        {
+            var mainChest = Main.chest[data.ChestIndex];
+            if (mainChest != null)
+            {
+                AddTransfer(item, from, new Point(mainChest.x, mainChest.y), mainChest.index, skipFake: false);
+                AddSparkle(new Point(mainChest.x, mainChest.y));
+                queued = true;
+            }
+        }
+
+        // 3. 区域内其他箱子
+        if (!queued)
+        {
+            var region = TShock.Regions.GetRegionByName(data.RegName);
+            if (region != null)
+            {
+                var chests = Main.chest.AsSpan();
+                for (int i = 0; i < chests.Length; i++)
+                {
+                    var other = chests[i];
+                    if (other == null) continue;
+                    if (i == data.ChestIndex) continue;
+                    if (data.SupChest && i == data.OutChest) continue;
+                    if (!region.Area.Contains(other.x, other.y)) continue;
+
+                    AddTransfer(item, from, new Point(other.x, other.y), other.index, skipFake: false);
+                    AddSparkle(new Point(other.x, other.y));
+                    queued = true;
+                    break;
+                }
+            }
+        }
+
+        // 4. 掉落地面（无动画）
+        if (!queued)
+        {
+            int dropX = data.Pos.X * 16 + 8;
+            int dropY = data.Pos.Y * 16 + 8;
+            int index = Item.NewItem(null, new Vector2(dropX, dropY), Vector2.Zero, item.type);
+            if (data.RegionPlayers.Count > 0)
+                foreach (var plr in data.RegionPlayers)
+                    plr.SendData(PacketTypes.UpdateItemDrop, null, index);
+        }
     }
 
-    private bool TryPutIntoChest(Chest chest, Item item)
+    public static bool TryPutIntoChest(Chest chest, Item item)
     {
         var items = chest.item.AsSpan();
         int slot = -1;
@@ -711,24 +737,74 @@ public class AutoFishing
     }
     #endregion
 
-    #region 生成动画方法
-    private void SendEffects(Item item, Vector2 from, Point toPos)
+    #region 动画执行队列方法
+    private void AddMove(Item item, Vector2 from, Point toPos, bool skipFake)
     {
-        if (data.RegionPlayers.Count == 0) return;
+        bool wasEmpty = data.AnimQueue.Count == 0;
+        data.AnimQueue.Enqueue(new AnimReq
+        {
+            Type = AnimType.Move,
+            item = item,
+            from = from,
+            toPos = toPos,
+            skipFake = skipFake,
+            data = this.data
+        });
+        if (wasEmpty)
+            Plugin.ActiveAnim.Add(data);
+        if (data.AnimFrame == 0)
+            data.AnimFrame = Plugin.Timer + 30;
+    }
 
+    private void AddSparkle(Point pos)
+    {
+        bool wasEmpty = data.AnimQueue.Count == 0;
+        data.AnimQueue.Enqueue(new AnimReq
+        {
+            Type = AnimType.Sparkle,
+            toPos = pos,
+            data = this.data
+        });
+        if (wasEmpty)
+            Plugin.ActiveAnim.Add(data);
+        if (data.AnimFrame == 0)
+            data.AnimFrame = Plugin.Timer + 30;
+    }
+
+    private void AddTransfer(Item item, Vector2 from, Point toPos, int chestIdx, bool skipFake)
+    {
+        bool wasEmpty = data.AnimQueue.Count == 0;
+        data.AnimQueue.Enqueue(new AnimReq
+        {
+            Type = AnimType.Transfer,
+            item = item,
+            from = from,
+            toPos = toPos,
+            chestIdx = chestIdx,
+            skipFake = skipFake,
+            data = this.data
+        });
+        if (wasEmpty)
+            Plugin.ActiveAnim.Add(data);
+        if (data.AnimFrame == 0)
+            data.AnimFrame = Plugin.Timer + 30;
+    }
+
+    public void PlayMove(Item item, Vector2 from, Point toPos, bool skipFake)
+    {
         Vector2 to = new Vector2(toPos.X * 16 + 8, toPos.Y * 16 + 8);
-
-        if (Config.FakeFish)
+        if (!skipFake && Config.FakeFish)
             SpawnFakeFish(item, from);
-
         if (Config.ChestTransfer)
             Chest.VisualizeChestTransfer(from, to, item.type, Chest.ItemTransferVisualizationSettings.Hopper);
+    }
 
-        if (Config.Sparkle)
-        {
-            var setting = new ParticleOrchestraSettings { PositionInWorld = to, MovementVector = Vector2.Zero };
-            ParticleOrchestrator.BroadcastOrRequestParticleSpawn(ParticleOrchestraType.RainbowBoulder4, setting);
-        }
+    public void PlaySparkle(Point pos)
+    {
+        if (!Config.Sparkle) return;
+        Vector2 worldPos = new Vector2(pos.X * 16 + 8, pos.Y * 16 + 8);
+        var setting = new ParticleOrchestraSettings { PositionInWorld = worldPos, MovementVector = Vector2.Zero };
+        ParticleOrchestrator.BroadcastOrRequestParticleSpawn(ParticleOrchestraType.RainbowBoulder4, setting);
     }
     #endregion
 
@@ -776,6 +852,73 @@ public class AutoFishing
                 return true;
         }
         return false;
+    }
+    #endregion
+
+    #region 判断物品是否为钓鱼机必备物品
+    public static bool SafeItem(Item item, MachData data)
+    {
+        if (item == null || item.IsAir || item.IsACoin) return false;
+
+        // 鱼竿
+        if (item.fishingPole > 0) return true;
+        // 鱼饵
+        if (item.bait > 0) return true;
+        // 宝匣药水
+        if (item.type == ItemID.CratePotion) return true;
+        // 钓鱼药水
+        if (item.type == ItemID.FishingPotion) return true;
+        // 鱼饵桶
+        if (item.type == ItemID.ChumBucket) return true;
+        // 永久渔力加成物品
+        if (Config.CustomPowerItems.ContainsKey(item.type)) return true;
+        // 区域Buff消耗物品
+        if (Config.CustomUsedItem.Any(x => x.ItemType == item.type)) return true;
+        // 岩浆钓鱼相关物品
+        int[] lavaItems = [ItemID.LavaFishingHook, ItemID.LavaproofTackleBag, ItemID.HotlineFishingHook];
+        if (lavaItems.Contains(item.type)) return true;
+        // 钓具箱相关
+        if (item.type == ItemID.TackleBox || item.type == ItemID.AnglerTackleBag || item.type == ItemID.LavaproofTackleBag)
+            return true;
+
+        return false;
+    }
+    #endregion
+
+    #region 将主箱子中的非必备物品转移到输出箱
+    public static void TransferItem(MachData data)
+    {
+        if (!data.SupChest || data.OutChest == -1) return;
+        if (data.ChestIndex == data.OutChest) return; // 输出箱就是主箱，避免自身转移
+
+        var mainChest = Main.chest[data.ChestIndex];
+        var outChest = Main.chest[data.OutChest];
+        if (mainChest == null || outChest == null) return;
+
+        bool moved = false;
+        var items = mainChest.item.AsSpan();
+
+        for (int i = 0; i < items.Length; i++)
+        {
+            var item = items[i];
+            if (item == null || item.IsAir || item.IsACoin) continue;
+            if (SafeItem(item, data)) continue;
+
+            // 尝试放入输出箱
+            if (TryPutIntoChest(outChest, item))
+            {
+                // 清空原格子
+                item.TurnToAir();
+                NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, data.ChestIndex, i);
+                moved = true;
+            }
+        }
+
+        if (moved && data.RegionPlayers.Count > 0)
+        {
+            foreach (var plr in data.RegionPlayers)
+                plr.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 已将物品转移至输出箱"), color);
+        }
     }
     #endregion
 

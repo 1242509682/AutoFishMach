@@ -2,9 +2,9 @@
 using Terraria;
 using Terraria.ID;
 using TShockAPI;
-using static FishMach.Utils;
-using static FishMach.Plugin;
 using static FishMach.DataManager;
+using static FishMach.Plugin;
+using static FishMach.Utils;
 
 namespace FishMach;
 
@@ -75,7 +75,7 @@ public static class EnvManager
     #region 快速检查液体坐标（含快速水体大小检测）
     /// <summary>
     /// 快速检查当前锚点所在水体是否仍满足液体需求（轻量级，避免每次全量统计）
-    /// 返回 true 表示液体不足，需要全量统计；false 表示液体充足，无需更新。
+    /// 返回 false 表示液体不足，需要全量统计；true 表示液体充足，无需更新。
     /// </summary>
     public static bool CheckLiq(MachData data)
     {
@@ -138,8 +138,11 @@ public static class EnvManager
     #region 统计液体（连通区域优先）
     public static void SyncLiquid(MachData data)
     {
-        if (CheckLiq(data))
-            return;
+        // 快速检查：如果液体严重不足，直接标记并返回
+        if (CheckLiq(data)) return;
+
+        // 清空动画队列，避免播放过时动画
+        data.ClearAnim();
 
         var region = TShock.Regions.GetRegionByName(data.RegName);
         if (region == null)
