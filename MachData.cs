@@ -50,8 +50,8 @@ public class MachData
     public Point Pos { get; set; } = new Point();
     [JsonProperty("箱子索引")]
     public int ChestIndex { get; set; } = -1;
-    [JsonProperty("输出索引")]
-    public int OutChest { get; set; } = -1;       // 输出箱索引，-1表示使用主箱
+    [JsonProperty("输出列表")]
+    public List<int> OutChests { get; set; } = new();
     [JsonProperty("神圣")]
     public bool ZoneHallow { get; set; }
     [JsonProperty("腐化")]
@@ -157,22 +157,18 @@ public class MachData
     [JsonIgnore]
     public bool BaitBroadcast = false;
 
-    // 宝匣药水槽位与消耗时间
+    // 宝匣药水槽位
     [JsonIgnore]
     public int CratePotionSlot { get; set; } = -1;
-
     // 大气因子
     [JsonIgnore]
     public float atmo { get; set; }
-
     // 钓鱼药水槽位与消耗时间
     [JsonIgnore]
     public int FishingPotionSlot { get; set; } = -1;
-
     // 鱼饵桶
     [JsonIgnore]
     public int ChumBucketSlot { get; set; } = -1;
-
 
     // 区域玩家表
     [JsonIgnore]
@@ -193,7 +189,6 @@ public class MachData
     // 分帧执行（避免同1帧触发多台钓鱼机）
     [JsonIgnore]
     public long nextFrame { get; set; } = 0;
-
     [JsonIgnore] 
     public AutoFishing Engine { get; set; }
 
@@ -214,6 +209,8 @@ public class MachData
     public Queue<AnimReq> AnimQueue { get; set; } = new();
     [JsonIgnore]
     public long AnimFrame { get; set; } = 0;
+    [JsonIgnore]
+    public int AnimOutIdx { get; set; } = 0;   // 当前动画指向的传输箱索引
 
     // 清理动画队列方法
     public void ClearAnim()
@@ -223,9 +220,38 @@ public class MachData
         AnimFrame = 0;
     }
 
+    // 缓存非转移物品
+    [JsonIgnore]
+    public HashSet<int> SafeTypes { get; set; } = new();
+    // 是否需要转移积压物品
+    [JsonIgnore]
+    public bool NeedPut { get; set; } = false;
+    // 上次转移的帧数（用于冷却）
+    [JsonIgnore]
+    public long LastPutFrame { get; set; } = 0;
+
     // 缓存NPC
     [JsonIgnore]
     public Dictionary<int, int> Monsters { get; set; } = new(); // 怪物类型 -> 数量
+
+    // 最后一次电路触发的帧数
+    [JsonIgnore]
+    public long WiringFrame { get; set; } = 0;
+    // 上次激活状态（用于打开箱子时检测）
+    [JsonIgnore]
+    public bool Wiring
+    {
+        get
+        {
+            if (WiringFrame == 0) return false;
+            return (Plugin.Timer - WiringFrame) < 120;
+        }
+    }
+
+    // 传输箱表辅助属性
+    [JsonIgnore]
+    public bool HasOut => OutChests.Count > 0;
+
 
     public MachData() { }
 }

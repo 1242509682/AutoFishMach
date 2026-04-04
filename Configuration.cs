@@ -10,23 +10,33 @@ namespace FishMach;
 internal class Configuration
 {
     #region 配置项成员
-    [JsonProperty("自定渔获进度参考", Order = -11)]
+    [JsonProperty("自定渔获进度参考", Order = -15)]
     public List<string> Reference = new();
-    [JsonProperty("使用方法", Order = -10)]
+    [JsonProperty("使用方法", Order = -14)]
     public List<string> Text { get; set; } = new();
-    [JsonProperty("插件开关", Order = -9)]
+    [JsonProperty("插件开关", Order = -13)]
     public bool Enabled { get; set; } = true;
-    [JsonProperty("传输模式", Order = -8)]
+    [JsonProperty("钓鱼机数", Order = -12)]
+    public int MaxMachines { get; set; } = 0; // 0表示无限制
+    [JsonProperty("传输模式", Order = -11)]
     public bool TransferMode { get; set; } = true;
-    [JsonProperty("钓任务鱼", Order = -7)]
+    [JsonProperty("传输间隔", Order = -10)]
+    public int TransferInterval { get; set; } = 5;
+    [JsonProperty("同时传输", Order = -9)]
+    public int TransferStack { get; set; } = 5;
+    [JsonProperty("传输箱数", Order = -8)]
+    public int MaxOutChest { get; set; } = 3;
+    [JsonProperty("传输钱币", Order = -7)]
+    public bool TransferCoins { get; set; } = true;
+    [JsonProperty("钓任务鱼", Order = -6)]
     public bool QuestFish { get; set; } = true;
-    [JsonProperty("假鱼动画", Order = -6)]
+    [JsonProperty("假鱼动画", Order = -5)]
     public bool FakeFish { get; set; } = true;
-    [JsonProperty("物品动画", Order = -5)]
+    [JsonProperty("物品动画", Order = -4)]
     public bool ChestTransfer { get; set; } = true;
-    [JsonProperty("闪光动画", Order = -4)]
+    [JsonProperty("闪光动画", Order = -3)]
     public bool Sparkle { get; set; } = true;
-    [JsonProperty("区域保护", Order = -1)]
+    [JsonProperty("区域保护", Order = -2)]
     public bool RegionBuild { get; set; } = false;
     [JsonProperty("区域广播", Order = 0)]
     public bool RegionBroadcast { get; set; } = true;
@@ -38,8 +48,6 @@ internal class Configuration
     public int NeedLiqStack { get; set; } = 75;
     [JsonProperty("需要电路", Order = 4)]
     public bool NeedWiring { get; set; } = true;
-    [JsonProperty("电路限频", Order = 5)]
-    public bool LimitFrames { get; set; } = true;
     [JsonProperty("钓鱼间隔", Order = 6)]
     public string FishInterval { get; set; } = "60,240";
     [JsonProperty("环境范围", Order = 7)]
@@ -67,6 +75,7 @@ internal class Configuration
     [JsonProperty("液体弹幕检测", Order = 18)] 
     public List<int> LiqProj { get; set; } = [];
 
+    [JsonIgnore] public int TransferFrames => TransferInterval * 60;
     [JsonIgnore] public int MinFrames { get; private set; } = 60;
     [JsonIgnore] public int MaxFrames { get; private set; } = 60;
     #endregion

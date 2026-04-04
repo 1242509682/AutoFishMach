@@ -11,7 +11,7 @@ namespace FishMach;
 public static class EnvManager
 {
     #region 更新钓鱼机的所有物品相关缓存（渔力加成、鱼竿、鱼饵、特殊道具）仅从主箱子读取
-    private static int[] lavaItems = [ItemID.LavaFishingHook, ItemID.LavaproofTackleBag, ItemID.HotlineFishingHook];
+    private static HashSet<int> lavaItemsSet = [ItemID.LavaFishingHook, ItemID.LavaproofTackleBag, ItemID.HotlineFishingHook];
     public static void SyncItem(MachData data)
     {
         data.ExtraPower = 0;
@@ -53,22 +53,18 @@ public static class EnvManager
                 Config.CustomPowerItems.TryGetValue(item.type, out int power))
                 data.ExtraPower += power;
 
-            bool isLava = false;
-            for (int j = 0; j < lavaItems.Length; j++)
-            {
-                if (lavaItems[j] == item.type)
-                {
-                    isLava = true;
-                    break;
-                }
-            }
-            if (isLava) data.CanFishInLava = true;
+            if (lavaItemsSet.Contains(item.type))
+                data.CanFishInLava = true;
 
             if (item.type == ItemID.TackleBox ||
                 item.type == ItemID.AnglerTackleBag ||
                 item.type == ItemID.LavaproofTackleBag)
                 data.HasTackle = true;
         }
+
+
+        // 重建非转移物品缓存
+        AutoFishing.UpdateSafeItem(data);
     }
     #endregion
 
@@ -435,7 +431,7 @@ public static class EnvManager
     #endregion
 
     #region 将缓存环境赋值给假玩家
-    public static void SetupTempPlayer(MachData data)
+    public static void SetupTempPlayer(MachData data, bool Custom = false)
     {
         var plr = TempPlayer;
         plr.position = new Vector2(data.Pos.X * 16, data.Pos.Y * 16);
@@ -448,26 +444,6 @@ public static class EnvManager
         plr.ZoneDesert = data.ZoneDesert; // 沙漠
         plr.ZoneBeach = data.ZoneBeach; // 海洋
         plr.ZoneDungeon = data.ZoneDungeon; // 地牢
-        plr.ZoneShimmer = data.ZoneShimmer; // 微光
-        plr.ZoneRain = data.ZoneRain; // 下雨
-        plr.ZoneSandstorm = data.ZoneSandstorm; // 沙尘暴
-        plr.ZoneShadowCandle = data.ZoneShadowCandle; // 影烛 
-        plr.ZoneWaterCandle = data.ZoneWaterCandle; // 水蜡烛 
-        plr.ZonePeaceCandle = data.ZonePeaceCandle; // 和平蜡烛 
-        plr.ZoneGraveyard = data.ZoneGraveyard; // 墓地 
-        plr.ZoneGranite = data.ZoneGranite; // 花岗岩 
-        plr.ZoneMarble = data.ZoneMarble; // 大理石 
-        plr.ZoneMeteor = data.ZoneMeteor; // 陨石坑 
-        plr.ZoneGlowshroom = data.ZoneGlowshroom; // 蘑菇地 
-        plr.ZoneGemCave = data.ZoneGemCave; // 宝石洞 
-        plr.ZoneHive = data.ZoneHive; // 蜂巢 
-        plr.ZoneLihzhardTemple = data.ZoneLihzhardTemple; // 神庙 
-        plr.ZoneOldOneArmy = data.ZoneOldOneArmy; // 旧日军团 
-        plr.ZoneTowerNebula = data.ZoneTowerNebula; // 星云天塔柱 
-        plr.ZoneTowerSolar = data.ZoneTowerSolar; // 日耀天塔柱 
-        plr.ZoneTowerStardust = data.ZoneTowerStardust; // 星尘天塔柱 
-        plr.ZoneTowerVortex = data.ZoneTowerVortex; // 星漩天塔柱 
-        plr.ZoneUndergroundDesert = data.ZoneUndergroundDesert; // 地下沙漠 
 
         plr.luck = data.luck; // 幸运值
 
@@ -477,6 +453,31 @@ public static class EnvManager
         plr.ZoneDirtLayerHeight = hl == 2; // 地下
         plr.ZoneRockLayerHeight = hl == 3; // 洞穴
         plr.ZoneUnderworldHeight = hl == 4; // 地狱
+
+        // 给自定义渔获用的 常规钓鱼 用上面就够
+        if (Custom)
+        {
+            plr.ZoneShimmer = data.ZoneShimmer; // 微光
+            plr.ZoneRain = data.ZoneRain; // 下雨
+            plr.ZoneSandstorm = data.ZoneSandstorm; // 沙尘暴
+            plr.ZoneShadowCandle = data.ZoneShadowCandle; // 影烛 
+            plr.ZoneWaterCandle = data.ZoneWaterCandle; // 水蜡烛 
+            plr.ZonePeaceCandle = data.ZonePeaceCandle; // 和平蜡烛 
+            plr.ZoneGraveyard = data.ZoneGraveyard; // 墓地 
+            plr.ZoneGranite = data.ZoneGranite; // 花岗岩 
+            plr.ZoneMarble = data.ZoneMarble; // 大理石 
+            plr.ZoneMeteor = data.ZoneMeteor; // 陨石坑 
+            plr.ZoneGlowshroom = data.ZoneGlowshroom; // 蘑菇地 
+            plr.ZoneGemCave = data.ZoneGemCave; // 宝石洞 
+            plr.ZoneHive = data.ZoneHive; // 蜂巢 
+            plr.ZoneLihzhardTemple = data.ZoneLihzhardTemple; // 神庙 
+            plr.ZoneOldOneArmy = data.ZoneOldOneArmy; // 旧日军团 
+            plr.ZoneTowerNebula = data.ZoneTowerNebula; // 星云天塔柱 
+            plr.ZoneTowerSolar = data.ZoneTowerSolar; // 日耀天塔柱 
+            plr.ZoneTowerStardust = data.ZoneTowerStardust; // 星尘天塔柱 
+            plr.ZoneTowerVortex = data.ZoneTowerVortex; // 星漩天塔柱 
+            plr.ZoneUndergroundDesert = data.ZoneUndergroundDesert; // 地下沙漠 
+        }
     }
     #endregion
 

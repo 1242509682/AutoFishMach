@@ -16,6 +16,9 @@ internal class DataManager
     public static Dictionary<Point, MachData> MachByPos = new();
     public static Dictionary<int, MachData> MachByChest = new();
     public static Dictionary<string, MachData> MachByRegName = new();
+    // 查找传输箱方法
+    public static Dictionary<int, HashSet<MachData>> OutChestMap = new();
+
 
     public static MachData? FindTile(Point pos)
         => MachByPos.TryGetValue(pos, out var data) ? data : null;
@@ -67,12 +70,67 @@ internal class DataManager
         // 添加新映射
         if (!Machines.Contains(data))
             Machines.Add(data);
+
         MachByPos[data.Pos] = data;
+
         if (data.ChestIndex != -1)
             MachByChest[data.ChestIndex] = data;
+
         if (!string.IsNullOrEmpty(data.RegName))
             MachByRegName[data.RegName] = data;
+
+        // 处理传输箱映射（一对多）
+        foreach (var outIdx in data.OutChests)
+        {
+            if (!OutChestMap.TryGetValue(outIdx, out var set))
+            {
+                set = new HashSet<MachData>();
+                OutChestMap[outIdx] = set;
+            }
+            set.Add(data);
+        }
+
         Save(data);
+    }
+    #endregion
+
+    #region 设置输出机映射
+    /// <summary>添加一个传输箱，自动维护映射并保存</summary>
+    public static void AddOutChest(MachData data, int newOut)
+    {
+        if (data == null || newOut == -1) return;
+        if (data.OutChests.Contains(newOut)) return;
+
+        data.OutChests.Add(newOut);
+        if (!OutChestMap.TryGetValue(newOut, out var set))
+        {
+            set = new HashSet<MachData>();
+            OutChestMap[newOut] = set;
+        }
+        set.Add(data);
+        Save(data);
+    }
+
+    /// <summary>移除一个传输箱，自动维护映射并保存</summary>
+    public static void RemoveOutChest(MachData data, int outIdx)
+    {
+        if (data == null || !data.OutChests.Remove(outIdx)) return;
+
+        if (OutChestMap.TryGetValue(outIdx, out var set))
+        {
+            set.Remove(data);
+            if (set.Count == 0)
+                OutChestMap.Remove(outIdx);
+        }
+        Save(data);
+    }
+
+    /// <summary>清空所有传输箱</summary>
+    public static void ClearOutChests(MachData data)
+    {
+        if (data == null) return;
+        foreach (var outIdx in data.OutChests.ToList())
+            RemoveOutChest(data, outIdx);
     }
     #endregion
 
@@ -86,6 +144,7 @@ internal class DataManager
             MachByPos.Clear();
             MachByChest.Clear();
             MachByRegName.Clear();
+            OutChestMap.Clear();
             return;
         }
 
@@ -111,6 +170,7 @@ internal class DataManager
         MachByPos.Clear();
         MachByChest.Clear();
         MachByRegName.Clear();
+        OutChestMap.Clear();
 
         // 赋值新列表
         Machines = newMachines;
@@ -119,16 +179,30 @@ internal class DataManager
         foreach (var data in Machines)
         {
             MachByPos[data.Pos] = data;
+
             if (data.ChestIndex != -1)
                 MachByChest[data.ChestIndex] = data;
+
             if (!string.IsNullOrEmpty(data.RegName))
                 MachByRegName[data.RegName] = data;
+
+            if (data.HasOut)
+                foreach (var outIdx in data.OutChests)
+                {
+                    if (!OutChestMap.TryGetValue(outIdx, out var set))
+                    {
+                        set = new HashSet<MachData>();
+                        OutChestMap[outIdx] = set;
+                    }
+                    set.Add(data);
+                }
 
             foreach (var kv in data.Custom)
             {
                 if (kv.Value.Expiry.Kind != DateTimeKind.Utc)
                     kv.Value.Expiry = DateTime.SpecifyKind(kv.Value.Expiry, DateTimeKind.Utc);
             }
+
             foreach (var kv in data.ActiveZoneBuffs)
             {
                 if (kv.Value.Kind != DateTimeKind.Utc)
@@ -144,6 +218,8 @@ internal class DataManager
     {
         var data = FindTile(pos);
         if (data == null) return;
+
+        data.ClearAnim();
 
         // 从动画活跃集合中移除
         ActiveAnim.Remove(data);
@@ -161,10 +237,25 @@ internal class DataManager
 
         if (data.ChestIndex != -1)
             MachByChest.Remove(data.ChestIndex);
+
         if (!string.IsNullOrEmpty(data.RegName))
             MachByRegName.Remove(data.RegName);
 
+        // 从传输箱映射中移除
+        foreach (var outIdx in data.OutChests)
+        {
+            if (OutChestMap.TryGetValue(outIdx, out var set))
+            {
+                set.Remove(data);
+                if (set.Count == 0)
+                    OutChestMap.Remove(outIdx);
+            }
+        }
+
         Machines.Remove(data);
+
+        // 标记调度器中的机器为失效
+        FishSched.Invalidate(data);
         Del(data);
     }
     #endregion
@@ -188,6 +279,8 @@ internal class DataManager
         MachByPos.Clear();
         MachByChest.Clear();
         MachByRegName.Clear();
+        OutChestMap.Clear();
+        FishSched.Clear();
 
         if (Directory.Exists(CacheDir))
             Directory.Delete(CacheDir, true);

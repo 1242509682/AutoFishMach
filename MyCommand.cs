@@ -58,7 +58,7 @@ internal class MyCommand
                     var all = Machines;
                     if (all.Count == 0)
                     {
-                        if(plr.RealPlayer) plr.SendMessage(TextGradient("没有自动钓鱼机"), color);
+                        if (plr.RealPlayer) plr.SendMessage(TextGradient("没有自动钓鱼机"), color);
                         else plr.SendMessage($"没有自动钓鱼机", color);
                         return;
                     }
@@ -192,8 +192,8 @@ internal class MyCommand
                         }
 
                         TPHelp(plr, all);
-                        plr.SendMessage(TextGradient("使用方法: /afm tp 编号"), color);
-                        plr.SendMessage(TextGradient("传输出箱: /afm tp 编号 [c/FF8374:c]\n"), color);
+                        plr.SendMessage(TextGradient("传到钓鱼机: /afm tp 编号"), color);
+                        plr.SendMessage(TextGradient("依序传输箱: /afm tp 编号 [c/FF8374:c] 或 序号\n"), color);
                         return;
                     }
 
@@ -210,112 +210,77 @@ internal class MyCommand
                         return;
                     }
 
-                    // 检查是否要传送到输出箱
-                    if (args.Parameters.Count >= 3 && args.Parameters[2].Equals("c", StringComparison.OrdinalIgnoreCase))
+                    // 检查是否有第三个参数
+                    if (args.Parameters.Count >= 3)
                     {
-                        if (data.OutChest == -1)
+                        string third = args.Parameters[2].ToLower();
+
+                        // 循环传送模式（原有）
+                        if (third == "c")
                         {
-                            plr.SendErrorMessage("\n该钓鱼机未设置输出箱");
+                            if (data.OutChests.Count == 0)
+                            {
+                                plr.SendErrorMessage("\n该钓鱼机未设置任何传输箱");
+                                return;
+                            }
+
+                            string key = $"tp_{chestIdx}";
+                            int idx = plr.GetData<int>(key);
+                            if (idx >= data.OutChests.Count)
+                                idx = 0;
+
+                            int targetOut = data.OutChests[idx];
+                            var outChest = Main.chest[targetOut];
+                            if (outChest == null)
+                            {
+                                plr.SendErrorMessage("\n传输箱已不存在");
+                                DataManager.RemoveOutChest(data, targetOut);
+                                return;
+                            }
+
+                            if (plr.Teleport(outChest.x * 16 - 8, outChest.y * 16 - 8))
+                            {
+                                plr.SendMessage(TextGradient($"\n已传送 [{idx + 1}/{data.OutChests.Count}] 个传输箱"), color);
+                                plr.SetData(key, idx + 1);
+                            }
                             return;
                         }
-                        var outChest = Main.chest[data.OutChest];
-                        if (outChest == null)
+
+                        // 尝试解析为整数（输出箱序号）
+                        if (int.TryParse(third, out int outIdx) && outIdx >= 1 && outIdx <= data.OutChests.Count)
                         {
-                            plr.SendErrorMessage("\n输出箱已不存在");
+                            int targetOut = data.OutChests[outIdx - 1];
+                            var outChest = Main.chest[targetOut];
+                            if (outChest == null)
+                            {
+                                plr.SendErrorMessage("\n传输箱已不存在");
+                                DataManager.RemoveOutChest(data, targetOut);
+                                return;
+                            }
+
+                            if (plr.Teleport(outChest.x * 16 - 8, outChest.y * 16 - 8))
+                            {
+                                plr.SendMessage(TextGradient($"\n已传送第 {outIdx} 个传输箱"), color);
+                            }
                             return;
                         }
-                        // 传送到输出箱位置（箱子中心偏左上方一格）
-                        if (plr.Teleport(outChest.x * 16 - 8, outChest.y * 16 - 8))
-                            plr.SendMessage(TextGradient($"\n已传送到输出箱位置: [c/ED756F:{chestIdx}]"), color);
+
+                        // 无效参数，提示帮助
+                        plr.SendMessage(TextGradient($"\n用法: /afm tp 编号 [c或序号]"), color);
+                        return;
                     }
-                    else
-                    {
-                        // 传送到主箱位置
-                        if (plr.Teleport(data.Pos.X * 16 - 8, data.Pos.Y * 16 - 8))
-                            plr.SendMessage(TextGradient($"\n已传送到钓鱼机位置: [c/ED756F:{chestIdx}]"), color);
-                    }
+
+                    // 无第三个参数，传送到主箱
+                    if (plr.Teleport(data.Pos.X * 16 - 8, data.Pos.Y * 16 - 8))
+                        plr.SendMessage(TextGradient($"\n已传送钓鱼机: [c/ED756F:{chestIdx}]"), color);
                 }
                 break;
 
             case "o":
             case "out":
             case "sc":
-            case "输出":
-                {
-                    if (!plr.RealPlayer) return;
-                    if (!Config.TransferMode && !IsAdmin(plr))
-                    {
-                        plr.SendMessage(TextGradient("传输模式已被管理员禁用"), color);
-                        return;
-                    }
-                    // 移除上次临时数据（如果有）
-                    if (plr.ContainsData("out"))
-                        plr.RemoveData("out");
-
-                    if (plr.CurrentRegion == null || !IsAfmRegion(plr.CurrentRegion.Name))
-                    {
-                        plr.SendMessage(TextGradient("请前往需要[c/F5FC73:开启传输模式]钓鱼机区域"), color);
-                        plr.SendMessage(TextGradient("传送到钓鱼机:/afm tp"), color);
-                        return;
-                    }
-
-                    var data = FindRegion(plr.CurrentRegion.Name);
-                    if (data == null)
-                    {
-                        plr.SendMessage(TextGradient("\n未找到钓鱼机数据"), color);
-                        return;
-                    }
-
-                    if (Config.RegionBuild && !IsAdmin(plr) && data.Owner != plr.Name)
-                    {
-                        plr.SendMessage(TextGradient($"\n你没有权限修改 {data.Owner}钓鱼机 传输模式"), color);
-                        return;
-                    }
-
-                    // 如果已有输出箱，则关闭传输模式
-                    if (data.OutChest != -1)
-                    {
-                        data.OutChest = -1;
-                        data.ClearAnim();
-                        Save(data);
-                        plr.SendMessage(TextGradient($"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 传输模式已关闭"), color);
-                        return;
-                    }
-
-                    // 未设置输出箱，检查当前是否已打开箱子
-                    int activeChest = plr.ActiveChest;
-                    if (activeChest != -1)
-                    {
-                        var chest = Main.chest[activeChest];
-                        if (chest != null)
-                        {
-                            // 检查输出箱是否指向自身
-                            if (activeChest == data.ChestIndex)
-                            {
-                                plr.SendMessage(TextGradient($"\n不能将钓鱼机设为输出箱"), color);
-                                return;
-                            }
-
-                            // 检查输出箱是否也是另一台钓鱼机的主箱
-                            if (FindChest(activeChest) != null)
-                            {
-                                plr.SendMessage(TextGradient($"\n输出箱不能是另一台钓鱼机"), color);
-                                return;
-                            }
-
-                            data.ClearAnim();
-                            data.OutChest = activeChest;
-                            Save(data);
-                            plr.SendMessage(TextGradient($"\n已设置 [c/ED756F:{data.ChestIndex}] 输出箱"), color);
-                            return;
-                        }
-                    }
-
-                    // 未打开箱子，则进入等待模式
-                    data.ClearAnim();
-                    plr.SetData("out", data.ChestIndex);
-                    plr.SendMessage(TextGradient("\n请打开[c/F5FC73:任意箱子]作为输出箱"), color);
-                }
+            case "传输":
+                HandleOutCommand(args);
                 break;
 
             case "i":
@@ -387,7 +352,7 @@ internal class MyCommand
             var mess = new StringBuilder();
             mess.AppendLine($"/{afm} s - 将箱子设为钓鱼机");
             mess.AppendLine($"/{afm} tp - 传送到指定钓鱼机");
-            mess.AppendLine($"/{afm} o - 跨区域传输模式");
+            mess.AppendLine($"/{afm} o - 批量设置传输箱");
             mess.AppendLine($"/{afm} if - 获取钓鱼机信息");
             mess.AppendLine($"/{afm} sv - 同步更新钓鱼机");
             mess.AppendLine($"/{afm} ls - 列出所有钓鱼机");
@@ -467,7 +432,11 @@ internal class MyCommand
         if (Config.NeedWiring) items.Add("需要电路:是");
         if (Config.QuestFish) items.Add("钓任务鱼:是");
         if (Config.AutoStopWhenEmpty) items.Add("无人关闭:是");
-        if (data.OutChest != -1) items.Add("传输模式:是");
+        if (data.HasOut)
+        {
+            string limit = Config.MaxOutChest > 0 ? $"/{Config.MaxOutChest}" : string.Empty;
+            mess.AppendLine($"传输箱: {data.OutChests.Count}{limit}个");
+        }
         if (Config.EnableCustomNPC) items.Add("允许怪物:是");
         if (Config.SoloCustomMonster)
         {
@@ -502,10 +471,10 @@ internal class MyCommand
         FixTip(data, plr);
 
         if (!string.IsNullOrEmpty(customBuff))
-            plr.SendMessage("[区域增益]\n" + TextGradient(customBuff), color2);
+            plr.SendMessage("\n" + TextGradient(customBuff), color2);
 
         if (!string.IsNullOrEmpty(excludeStr))
-            plr.SendMessage($"排除物品: {excludeStr}", color);
+            plr.SendMessage($"排除:{excludeStr}", color);
     }
     #endregion
 
@@ -524,13 +493,17 @@ internal class MyCommand
         string customBuff = GetCustomBuffString(data, false);
 
         // 欢迎消息
-        plr.SendMessage(TextGradient($"欢迎来到钓鱼机 [c/ED756F:{data.ChestIndex}] [c/75D1FF:{data.RegionPlayers.Count}] 人"), color);
+        plr.SendMessage(TextGradient($"\n欢迎来到钓鱼机 [c/ED756F:{data.ChestIndex}] [c/75D1FF:{data.RegionPlayers.Count}] 人"), color);
         plr.SendMessage($"归属 [c/E8EB6E:{data.Owner}] {rodInfo} {baitInfo}", color2);
         plr.SendMessage(TextGradient($"环境 {envStr}"), color);
         plr.SendMessage(TextGradient($"鱼池 {data.LiqName} [c/61BFE2:{data.MaxLiq}] 格 渔力 {basePower}({luckText})"), color);
 
-        if (data.OutChest != -1)
-            plr.SendMessage(TextGradient($"传输 [c/ED756F:{data.OutChest}]"), color);
+
+        if (data.HasOut)
+        {
+            string limit = Config.MaxOutChest > 0 ? $"/{Config.MaxOutChest}" : string.Empty;
+            plr.SendMessage(TextGradient($"传输箱: {data.OutChests.Count}{limit}个"),color);
+        }
 
         // 区域增益
         if (!string.IsNullOrEmpty(customBuff))
@@ -1199,14 +1172,19 @@ internal class MyCommand
         if (!hasBait)
             missing.Add("鱼饵");
 
-        // 电线缺失（如果需要电路）
-        if (Config.NeedWiring && !HasWiring(data.Pos))
-            missing.Add("电线");
+        // 电路缺失
+        if (Config.NeedWiring)
+        {
+            if (!HasWiring(data.Pos))
+                missing.Add("电线");
+            else if (!data.Wiring)
+                missing.Add("电路");
+        }
 
         if (missing.Count == 0)
             return string.Empty;
 
-        return $"[c/FE6352:缺:] {string.Join("、", missing)}";
+        return $"[c/FE6352:缺失:] {string.Join("、", missing)}";
     }
     #endregion
 
@@ -1218,22 +1196,175 @@ internal class MyCommand
         sb.AppendLine("\n[可传送的钓鱼机]");
         foreach (var m in all)
         {
-            var outMod = m.OutChest != -1 ? $"[c]" : string.Empty;
+            var outMod = m.HasOut ? $"[{m.OutChests.Count}]" : string.Empty;
+
             // 显示缺失项（如果有）
             string miss = GetMissItems(m);
             if (!string.IsNullOrEmpty(miss))
-            {
-                if (string.IsNullOrEmpty(outMod))
-                    outMod += miss;
-                else outMod += ($"\n{miss}");
-            }
+                outMod += ($"\n{miss}");
 
-            sb.Append($"{idx}.{m.Owner}的钓鱼机 [c/ED756F:{m.ChestIndex}] {outMod}\n");
+            sb.AppendLine($"{idx}.{m.Owner}的钓鱼机 [c/ED756F:{m.ChestIndex}] {outMod}");
 
 
             idx++;
         }
         plr.SendMessage(TextGradient(sb.ToString()), color);
+    }
+    #endregion
+
+    #region 传输箱管理指令（批量）
+    private static void HandleOutCommand(CommandArgs args)
+    {
+        var plr = args.Player;
+        if (!plr.RealPlayer) return;
+
+        if (!Config.TransferMode && !IsAdmin(plr))
+        {
+            plr.SendMessage(TextGradient("传输模式已被管理员禁用"), color);
+            return;
+        }
+
+        // 获取当前钓鱼机
+        if (plr.CurrentRegion == null || !IsAfmRegion(plr.CurrentRegion.Name))
+        {
+            plr.SendMessage(TextGradient("请前往需要修改传输箱的钓鱼机区域"), color);
+            return;
+        }
+
+        var data = FindRegion(plr.CurrentRegion.Name);
+        if (data == null)
+        {
+            plr.SendMessage(TextGradient("\n未找到钓鱼机数据"), color);
+            return;
+        }
+
+        if (Config.RegionBuild && !IsAdmin(plr) && data.Owner != plr.Name)
+        {
+            plr.SendMessage(TextGradient($"\n你没有权限修改 {data.Owner} 的钓鱼机传输箱"), color);
+            return;
+        }
+
+        // 无参数：切换记录模式
+        if (args.Parameters.Count == 1)
+        {
+            if (outPend.ContainsKey(plr.Name))
+            {
+                // 已有记录：清空并退出模式
+                outPend.Remove(plr.Name);
+                plr.SendMessage(TextGradient("\n已退出传输箱批量记录模式"), color);
+            }
+            else
+            {
+                // 无记录：进入记录模式
+                outPend[plr.Name] = new HashSet<int>();
+                plr.SendMessage(TextGradient("\n已进入传输箱批量记录模式"), color);
+                plr.SendMessage(TextGradient("请离开区域打开需要的传输箱"), color);
+                plr.SendMessage(TextGradient($"批量添加: /{afm} o add"), color);
+                plr.SendMessage(TextGradient($"批量移除: /{afm} o del"), color);
+                plr.SendMessage(TextGradient($"再次输入 /{afm} o 清空记录并退出模式"), color);
+            }
+            return;
+        }
+
+        // 有子命令，必须有记录
+        string sub = args.Parameters[1].ToLower();
+        if (!outPend.TryGetValue(plr.Name, out var set) || set.Count == 0)
+        {
+            plr.SendMessage(TextGradient($"没有待处理的传输箱操作记录"), color);
+            plr.SendMessage(TextGradient($"请先使用 /afm o 进入记录模式并打开箱子"), color);
+            plr.SendMessage(TextGradient($"批量添加: /{afm} o add"), color);
+            plr.SendMessage(TextGradient($"批量移除: /{afm} o del"), color);
+            plr.SendMessage(TextGradient($"再次输入 /{afm} o 清空记录并退出模式"), color);
+            return;
+        }
+
+        switch (sub)
+        {
+            case "add":
+                AddOut(plr, data, set);
+                break;
+            case "del":
+                DelOut(plr, data, set);
+                break;
+            default:
+                plr.SendMessage(TextGradient($"批量添加: /{afm} o add"), color);
+                plr.SendMessage(TextGradient($"批量移除: /{afm} o del"), color);
+                plr.SendMessage(TextGradient($"再次输入 /{afm} o 清空记录并退出模式"), color);
+                break;
+        }
+    }
+
+    /// <summary>批量添加传输箱</summary>
+    private static void AddOut(TSPlayer plr, MachData data, HashSet<int> set)
+    {
+        int added = 0, skipped = 0;
+        foreach (int chestIdx in set.ToList())
+        {
+            // 合法性检查
+            if (chestIdx == data.ChestIndex)
+            {
+                plr.SendMessage(TextGradient($"箱子 {chestIdx} 是钓鱼机自身，跳过"), color);
+                skipped++;
+                set.Remove(chestIdx);
+                continue;
+            }
+            if (FindChest(chestIdx) != null)
+            {
+                plr.SendMessage(TextGradient($"箱子 {chestIdx} 是另一台钓鱼机的主箱，跳过"), color);
+                skipped++;
+                set.Remove(chestIdx);
+                continue;
+            }
+            if (data.OutChests.Contains(chestIdx))
+            {
+                plr.SendMessage(TextGradient($"箱子 {chestIdx} 已是传输箱，跳过"), color);
+                skipped++;
+                set.Remove(chestIdx);
+                continue;
+            }
+            if (Config.MaxOutChest > 0 && data.OutChests.Count >= Config.MaxOutChest && !IsAdmin(plr))
+            {
+                plr.SendMessage(TextGradient($"已达到传输箱上限 {Config.MaxOutChest}，剩余箱子被跳过"), color);
+                break;
+            }
+
+            DataManager.AddOutChest(data, chestIdx);
+            added++;
+            set.Remove(chestIdx);
+        }
+
+        data.ClearAnim();
+        plr.SendMessage(TextGradient($"\n批量添加完成：成功 {added} 个，跳过 {skipped} 个"), color);
+        if (set.Count == 0)
+            outPend.Remove(plr.Name);
+        else
+            plr.SendMessage(TextGradient($"剩余记录: {string.Join(", ", set)}"), color);
+    }
+
+    /// <summary>批量移除传输箱</summary>
+    private static void DelOut(TSPlayer plr, MachData data, HashSet<int> set)
+    {
+        int removed = 0, notFound = 0;
+        foreach (int chestIdx in set.ToList())
+        {
+            if (data.OutChests.Contains(chestIdx))
+            {
+                DataManager.RemoveOutChest(data, chestIdx);
+                removed++;
+            }
+            else
+            {
+                notFound++;
+            }
+            set.Remove(chestIdx);
+        }
+
+        data.ClearAnim();
+        plr.SendMessage(TextGradient($"\n批量移除完成：成功移除 {removed} 个，不存在 {notFound} 个"), color);
+        if (set.Count == 0)
+            outPend.Remove(plr.Name);
+        else
+            plr.SendMessage(TextGradient($"剩余记录: {string.Join(", ", set)}"), color);
     }
     #endregion
 
