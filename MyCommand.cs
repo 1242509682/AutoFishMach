@@ -32,6 +32,13 @@ internal class MyCommand
                 {
                     if (!plr.RealPlayer) return;
 
+                    // 如果玩家已经在钓鱼机区域内，提示不能重复创建
+                    if (plr.CurrentRegion != null && IsAfmRegion(plr.CurrentRegion.Name))
+                    {
+                        plr.SendMessage(TextGradient("\n你已经在钓鱼机区域内，不能在此创建新的钓鱼机。"), color);
+                        return;
+                    }
+
                     // 设置自定义数据标记，表示玩家正在等待打开箱子
                     if (plr.ActiveChest == -1)
                     {
@@ -751,10 +758,15 @@ internal class MyCommand
 
         // 显示排除物品列表
         plr.SendMessage($"已进入批量排除模式，请将物品放入钓鱼箱中。", color2);
-        var data = DataManager.FindRegion(plr.CurrentRegion.Name);
-        if (data == null) return;
-        string NoItem = data.Exclude.Count > 0 ? string.Join(", ", data.Exclude.Select(id => $"{ItemIcon(id)}")) : "无";
-        plr.SendMessage($"当前排除物品: {NoItem}", color2);
+        if (plr.CurrentRegion != null && IsAfmRegion(plr.CurrentRegion.Name))
+        {
+            var data = DataManager.FindRegion(plr.CurrentRegion.Name);
+            if (data != null)
+            {
+                string NoItem = data.Exclude.Count > 0 ? string.Join(", ", data.Exclude.Select(id => $"{ItemIcon(id)}")) : "无";
+                plr.SendMessage($"当前排除物品: {NoItem}", color2);
+            }
+        }
     }
     #endregion
 
@@ -1257,7 +1269,7 @@ internal class MyCommand
             {
                 // 无记录：进入记录模式
                 outPend[plr.Name] = new HashSet<int>();
-                plr.SendMessage(TextGradient("\n已进入传输箱批量记录模式"), color);
+                plr.SendMessage(TextGradient("\n已进入传输箱批量记录模式\n"), color);
                 plr.SendMessage(TextGradient("请离开区域打开需要的传输箱"), color);
                 plr.SendMessage(TextGradient($"批量添加: /{afm} o add"), color);
                 plr.SendMessage(TextGradient($"批量移除: /{afm} o del"), color);
@@ -1298,6 +1310,7 @@ internal class MyCommand
     private static void AddOut(TSPlayer plr, MachData data, HashSet<int> set)
     {
         int added = 0, skipped = 0;
+        List<int> toRemove = new List<int>();
         foreach (int chestIdx in set.ToList())
         {
             // 合法性检查
@@ -1305,21 +1318,21 @@ internal class MyCommand
             {
                 plr.SendMessage(TextGradient($"箱子 {chestIdx} 是钓鱼机自身，跳过"), color);
                 skipped++;
-                set.Remove(chestIdx);
+                toRemove.Add(chestIdx);
                 continue;
             }
             if (FindChest(chestIdx) != null)
             {
                 plr.SendMessage(TextGradient($"箱子 {chestIdx} 是另一台钓鱼机的主箱，跳过"), color);
                 skipped++;
-                set.Remove(chestIdx);
+                toRemove.Add(chestIdx);
                 continue;
             }
             if (data.OutChests.Contains(chestIdx))
             {
                 plr.SendMessage(TextGradient($"箱子 {chestIdx} 已是传输箱，跳过"), color);
                 skipped++;
-                set.Remove(chestIdx);
+                toRemove.Add(chestIdx);
                 continue;
             }
             if (Config.MaxOutChest > 0 && data.OutChests.Count >= Config.MaxOutChest && !IsAdmin(plr))
@@ -1330,41 +1343,45 @@ internal class MyCommand
 
             DataManager.AddOutChest(data, chestIdx);
             added++;
-            set.Remove(chestIdx);
+            toRemove.Add(chestIdx);
         }
+
+        // 移除已处理的记录
+        foreach (int idx in toRemove)
+            set.Remove(idx);
 
         data.ClearAnim();
         plr.SendMessage(TextGradient($"\n批量添加完成：成功 {added} 个，跳过 {skipped} 个"), color);
-        if (set.Count == 0)
-            outPend.Remove(plr.Name);
-        else
-            plr.SendMessage(TextGradient($"剩余记录: {string.Join(", ", set)}"), color);
+        outPend.Remove(plr.Name);
     }
 
     /// <summary>批量移除传输箱</summary>
     private static void DelOut(TSPlayer plr, MachData data, HashSet<int> set)
     {
         int removed = 0, notFound = 0;
+        List<int> toRemove = new List<int>();
         foreach (int chestIdx in set.ToList())
         {
             if (data.OutChests.Contains(chestIdx))
             {
                 DataManager.RemoveOutChest(data, chestIdx);
                 removed++;
+                toRemove.Add(chestIdx);
             }
             else
             {
                 notFound++;
+                plr.SendMessage(TextGradient($"箱子 {chestIdx} 不是传输箱，已跳过（仍保留在记录中）"), color);
             }
-            set.Remove(chestIdx);
         }
+
+        // 仅移除成功删除的箱子记录
+        foreach (int idx in toRemove)
+            set.Remove(idx);
 
         data.ClearAnim();
         plr.SendMessage(TextGradient($"\n批量移除完成：成功移除 {removed} 个，不存在 {notFound} 个"), color);
-        if (set.Count == 0)
-            outPend.Remove(plr.Name);
-        else
-            plr.SendMessage(TextGradient($"剩余记录: {string.Join(", ", set)}"), color);
+        outPend.Remove(plr.Name);
     }
     #endregion
 

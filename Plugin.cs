@@ -20,7 +20,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     public static string PluginName => "自动钓鱼机";
     public override string Name => PluginName;
     public override string Author => "羽学";
-    public override Version Version => new(1, 1, 5);
+    public override Version Version => new(1, 1, 6);
     public override string Description => "使用/afm 指令指定一个箱子作为自动钓鱼机";
     #endregion
 
@@ -49,6 +49,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         GeneralHooks.ReloadEvent += ReloadConfig;
         On.Terraria.WorldGen.KillTile += OnKillTile;
         On.Terraria.Wiring.HitWireSingle += OnHitWireSingle;
+        On.Terraria.WorldGen.PlaceChest += OnPlaceChest;
         ServerApi.Hooks.GamePostInitialize.Register(this, GamePost);
         ServerApi.Hooks.ServerLeave.Register(this, OnServerLeave);
         ServerApi.Hooks.WorldSave.Register(this, OnWorldSave);
@@ -73,6 +74,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             GeneralHooks.ReloadEvent -= ReloadConfig;
             On.Terraria.WorldGen.KillTile -= OnKillTile;
             On.Terraria.Wiring.HitWireSingle -= OnHitWireSingle;
+            On.Terraria.WorldGen.PlaceChest -= OnPlaceChest;
             ServerApi.Hooks.GamePostInitialize.Deregister(this, GamePost);
             ServerApi.Hooks.ServerLeave.Deregister(this, OnServerLeave);
             ServerApi.Hooks.WorldSave.Deregister(this, OnWorldSave);
@@ -200,7 +202,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
 
         // 处理动画：每台机器独立
         var toRemove = new List<MachData>();
-        foreach (var data in ActiveAnim)
+        foreach (var data in ActiveAnim.ToList())
         {
             // 如果开启无人关闭且区域内无玩家，则清空动画队列并跳过处理
             if ((Config.NeedWiring && !data.Wiring) || (Config.AutoStopWhenEmpty && data.RegionPlayers.Count == 0))
@@ -223,7 +225,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                         break;
                     case AnimType.Transfer:
                         engine.PlayMove(req.item, req.from, req.toPos, req.skipFake);
-                        AutoFishing.PlaceFallback(req.item, req.chestIdx, req.data);
+                        AutoFishing.PutWithFallback(req.item, req.chestIdx, req.data,true);
                         break;
                 }
                 data.AnimFrame = Timer + 60; // 每台机器独立计时
@@ -375,6 +377,33 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     }
     #endregion
 
+    #region 放置箱子事件，缓存区域附近的箱子
+    private int OnPlaceChest(On.Terraria.WorldGen.orig_PlaceChest orig, int x, int y, ushort type, bool notNearOtherChests, int style)
+    {
+        var c = orig(x, y, type, notNearOtherChests, style);
+
+        if (c != -1)
+        {
+            var region = TShock.Regions.InAreaRegion(x, y).FirstOrDefault(r => IsAfmRegion(r.Name));
+            if (region != null)
+            {
+                var data = DataManager.FindRegion(region.Name);
+                if (data != null)
+                {
+                    if (!DataManager.RegionChests.TryGetValue(region.Name, out var set))
+                    {
+                        set = new HashSet<int>();
+                        DataManager.RegionChests[region.Name] = set;
+                    }
+                    set.Add(c);
+                }
+            }
+        }
+
+        return c;
+    }
+    #endregion
+
     #region 挖掉箱子自动移除钓鱼机与对应区域
     private static void OnKillTile(On.Terraria.WorldGen.orig_KillTile orig, int x, int y, bool fail, bool effectOnly, bool noItem)
     {
@@ -392,29 +421,37 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             if (tile.frameX % 36 != 0) x2--;
             if (tile.frameY % 36 != 0) y2--;
 
-            // 使用 Chest.FindChest 获取箱子索引
             int idx = Chest.FindChest(x2, y2);
 
             if (idx != -1)
             {
+                // 处理主箱
                 var data = FindChest(idx);
                 if (data != null && idx == data.ChestIndex)
                 {
+                    // 从区域箱子缓存中移除
+                    if (DataManager.RegionChests.TryGetValue(data.RegName, out var chestSet))
+                        chestSet.Remove(idx);
+
                     Remove(new Point(x2, y2));
                     TSPlayer.All.SendMessage(TextGradient($"钓鱼机已被摧毁: [c/ED756F:{data.ChestIndex}]"), color);
                 }
 
+                // 处理传输箱
                 if (OutChestMap.TryGetValue(idx, out var outDataSet))
                 {
                     var del = new List<string>();
                     foreach (var outData in outDataSet.ToList())
                     {
-                        // 移除该传输箱（仅当机器包含此传输箱时）
                         if (outData.OutChests.Contains(idx))
                         {
                             DataManager.RemoveOutChest(outData, idx);
                             outData.ClearAnim();
                             del.Add($"[c/ED756F:{outData.ChestIndex}]");
+
+                            // 从区域箱子缓存中移除
+                            if (DataManager.RegionChests.TryGetValue(outData.RegName, out var chestSet2))
+                                chestSet2.Remove(idx);
                         }
                     }
                     if (del.Count > 0)
@@ -423,7 +460,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             }
         }
 
-        // 最后执行原方法，真正摧毁 tile
+        // 最后执行原方法
         orig(x, y, fail, effectOnly, noItem);
     }
     #endregion
@@ -476,7 +513,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             if (c != -1 && !outSet.Contains(c))
             {
                 outSet.Add(c);
-                plr.SendMessage(TextGradient($"已记录传输箱: {c}"), color);
+                plr.SendMessage(TextGradient($"已记录传输箱: [c/FF6857:{c}]"), color);
             }
             return; // 记录模式下不执行后续钓鱼机相关逻辑
         }
@@ -932,6 +969,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             {
                 TSPlayer.All.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{mach.ChestIndex}] 区域已更新"), color);
             }
+
+            UpdateRegionChests(mach);
             return;
         }
 
@@ -953,17 +992,15 @@ public class Plugin(Main game) : TerrariaPlugin(game)
 
             // 重叠检查
             if (IsOverlap(pos, worldId, "更新", out left, out top, out w, out h, RegionName))
-            {
                 continue;
-            }
 
             // 更新区域范围大小
             if (TShock.Regions.PositionRegion(RegionName, left, top, w, h))
-            {
-
                 list.Add($"[c/ED756F:{data.ChestIndex}]");
-            }
         }
+
+        // 一次性更新所有区域的箱子缓存
+        UpdateAllRegionChests();
 
         if (list.Count > 0)
             TSPlayer.All.SendMessage(TextGradient($"钓鱼机区域已更新:{string.Join(",", list)}"), color);

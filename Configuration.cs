@@ -28,6 +28,8 @@ internal class Configuration
     public int MaxOutChest { get; set; } = 3;
     [JsonProperty("传输钱币", Order = -7)]
     public bool TransferCoins { get; set; } = true;
+    [JsonProperty("传输消息")]
+    public bool ShowTransferMsg { get; set; } = true;
     [JsonProperty("钓任务鱼", Order = -6)]
     public bool QuestFish { get; set; } = true;
     [JsonProperty("假鱼动画", Order = -5)]
@@ -47,7 +49,7 @@ internal class Configuration
     [JsonProperty("需要水量", Order = 3)]
     public int NeedLiqStack { get; set; } = 75;
     [JsonProperty("需要电路", Order = 4)]
-    public bool NeedWiring { get; set; } = true;
+    public bool NeedWiring { get; set; } = false;
     [JsonProperty("钓鱼间隔", Order = 6)]
     public string FishInterval { get; set; } = "60,240";
     [JsonProperty("环境范围", Order = 7)]
@@ -241,6 +243,8 @@ internal class Configuration
         foreach (var rule in CustomFishes)
         {
             rule.Desc = string.Empty;
+
+            if (rule.Chance <= 0) continue;
 
             if (rule.ItemType == 0 && rule.NPCType == 0)
             {

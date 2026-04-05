@@ -15,6 +15,16 @@ public class AutoFishing
 {
     private readonly MachData data;
 
+    private static readonly Item[] coin = new Item[4];
+
+    static AutoFishing()
+    {
+        coin[0] = ContentSamples.ItemsByType[ItemID.CopperCoin];
+        coin[1] = ContentSamples.ItemsByType[ItemID.SilverCoin];
+        coin[2] = ContentSamples.ItemsByType[ItemID.GoldCoin];
+        coin[3] = ContentSamples.ItemsByType[ItemID.PlatinumCoin];
+    }
+
     public AutoFishing(MachData data)
     {
         this.data = data;
@@ -115,14 +125,13 @@ public class AutoFishing
         int itemType = RuleList.TryGetItemDropType(context);
         if (itemType == 0) return;
 
-        var fish = new Item();
-        fish.SetDefaults(itemType);
+        Item fish = ContentSamples.ItemsByType[itemType].Clone();
         fish.stack = 1;
 
         if (data.Exclude.Contains(fish.type)) return;
 
         // 10. 放入箱子
-        PutToAnim(fish);
+        FishPutToAnim(fish);
     }
     #endregion
 
@@ -261,92 +270,64 @@ public class AutoFishing
     #region 查找消耗物品（只找一次,找不到就罢工）
     private void ConsumeItem(int type, ref int slot, ref DateTime Time, int Min, string? info = null)
     {
-        // 效果仍在有效期内，无需消耗新药水,罢工就不找了
-        if (DateTime.UtcNow < Time || slot == -2)
-            return;
+        if (DateTime.UtcNow < Time || slot == -2) return;
 
-        var chest = Main.chest[data.ChestIndex];
-        if (chest == null) return;
-
-        // 尝试使用缓存槽位（仅当有有效缓存时）
-        if (slot >= 0)
+        if (TakeOne(type, ref slot))
         {
-            var item = chest.item[slot];
-            if (item != null && !item.IsAir && item.type == type)
+            Time = DateTime.UtcNow.AddMinutes(Min);
+            if (data.RegionPlayers.Count > 0 && !string.IsNullOrEmpty(info))
             {
-                int idx = slot; // 保存原槽位
-                // 消耗一瓶
-                item.stack--;
-                if (item.stack <= 0)
-                {
-                    item.TurnToAir();
-                    slot = -1;  // 清除缓存
-                }
-                NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, idx);
-                Time = DateTime.UtcNow.AddMinutes(Min);
-
-                // 有人就播报
-                if (data.RegionPlayers.Count > 0)
-                    foreach (var plr in data.RegionPlayers)
-                        plr.SendMessage($"钓鱼机 [c/ED756F:{data.ChestIndex}] 已使用{ItemIcon(type)}" +
-                                                    TextGradient($"获得{Min}分钟{info}"), color2);
-                return;
-            }
-
-            // 缓存失效，清除
-            slot = -1;
-        }
-
-        if (slot == -1)
-        {
-            // 重新查找
-            var items = chest.item.AsSpan();
-            for (int i = 0; i < items.Length; i++)
-            {
-                ref var item = ref items[i];
-                if (item != null && !item.IsAir && item.type == type)
-                {
-                    item.stack--;
-                    if (item.stack <= 0)
-                        item.TurnToAir();
-                    else
-                        slot = i;  // 记录槽位
-                    NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, i);
-                    Time = DateTime.UtcNow.AddMinutes(Min);
-
-                    // 有人就播报
-                    if (data.RegionPlayers.Count > 0)
-                        foreach (var plr in data.RegionPlayers)
-                            plr.SendMessage($"钓鱼机 [c/ED756F:{data.ChestIndex}] 已使用{ItemIcon(type)}" +
-                                                TextGradient($"获得{Min}分钟{info}"), color2);
-                    return;
-                }
+                foreach (var plr in data.RegionPlayers)
+                    plr.SendMessage($"钓鱼机 [c/ED756F:{data.ChestIndex}] 已使用{ItemIcon(type)}" +
+                                    TextGradient($"获得{Min}分钟{info}"), color2);
             }
         }
-
-        // 没找到就不找了
-        slot = -2;
     }
     #endregion
 
     #region 消耗自定义物品方法(用于区域buff)
     private void UsedCustomItem(CustomUsedItems UsedItem, ref int slot, ref DateTime expiry, ref int bonus)
     {
-        // 如果效果仍在有效期内，无需消耗新药水
-        if (DateTime.UtcNow < expiry || slot == -2)
-            return;
+        if (DateTime.UtcNow < expiry || slot == -2) return;
+
+        if (TakeOne(UsedItem.ItemType, ref slot))
+        {
+            expiry = DateTime.UtcNow.AddMinutes(UsedItem.Minutes);
+            bonus = UsedItem.Power;
+
+            if (UsedItem.BuffID > 0)
+            {
+                data.ActiveZoneBuffs[UsedItem.BuffID] = expiry;
+                if (data.RegionPlayers.Count > 0)
+                {
+                    foreach (var plr in data.RegionPlayers)
+                    {
+                        plr.SetBuff(UsedItem.BuffID, 300);
+                        plr.SendMessage($"钓鱼机 [c/ED756F:{data.ChestIndex}] 已使用{ItemIcon(UsedItem.ItemType)}" +
+                                        TextGradient($"持续{UsedItem.Minutes}分钟:\n" +
+                                        TextGradient($"[c/5F9DB8:-] {UsedItem.BuffDesc}")), color);
+                    }
+                }
+            }
+        }
+    }
+    #endregion
+
+    #region 从箱子中消耗一个指定类型的物品，返回是否成功
+    private bool TakeOne(int itemType, ref int slot)
+    {
+        if (slot == -2) return false;
 
         var chest = Main.chest[data.ChestIndex];
-        if (chest == null) return;
+        if (chest == null) return false;
 
-        // 尝试使用缓存槽位
+        // 缓存槽位有效
         if (slot >= 0)
         {
             var item = chest.item[slot];
-            if (item != null && !item.IsAir && item.type == UsedItem.ItemType)
+            if (item != null && !item.IsAir && item.type == itemType)
             {
-                int idx = slot; // 保存原槽位
-                // 消耗一瓶
+                int idx = slot;
                 item.stack--;
                 if (item.stack <= 0)
                 {
@@ -354,29 +335,8 @@ public class AutoFishing
                     slot = -1;
                 }
                 NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, idx);
-                expiry = DateTime.UtcNow.AddMinutes(UsedItem.Minutes);
-                bonus = UsedItem.Power;
-
-                // 激活区域BUFF
-                if (UsedItem.BuffID > 0)
-                {
-                    data.ActiveZoneBuffs[UsedItem.BuffID] = expiry;
-
-                    // 立即为区域内所有玩家刷新BUFF
-                    if (data.RegionPlayers.Count > 0)
-                        foreach (var plr in data.RegionPlayers)
-                        {
-                            plr.SetBuff(UsedItem.BuffID, 300);
-
-                            plr.SendMessage($"钓鱼机 [c/ED756F:{data.ChestIndex}] 已使用{ItemIcon(UsedItem.ItemType)}" +
-                            TextGradient($"持续{UsedItem.Minutes}分钟:\n" +
-                            TextGradient($"[c/5F9DB8:-] {UsedItem.BuffDesc}")), color);
-                        }
-                }
-
-                return;
+                return true;
             }
-            // 缓存失效，清除
             slot = -1;
         }
 
@@ -384,39 +344,26 @@ public class AutoFishing
         var items = chest.item.AsSpan();
         for (int i = 0; i < items.Length; i++)
         {
-            ref var item = ref items[i];
-            if (item != null && !item.IsAir && item.type == UsedItem.ItemType)
+            ref var it = ref items[i];
+            if (it != null && !it.IsAir && it.type == itemType)
             {
-                item.stack--;
-                if (item.stack <= 0)
-                    item.TurnToAir();
-                else
-                    slot = i;
-                NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, i);
-                expiry = DateTime.UtcNow.AddMinutes(UsedItem.Minutes);
-                bonus = UsedItem.Power;
-
-                if (UsedItem.BuffID > 0)
+                it.stack--;
+                if (it.stack <= 0)
                 {
-                    data.ActiveZoneBuffs[UsedItem.BuffID] = expiry;
-
-                    // 立即为区域内所有玩家刷新BUFF
-                    if (data.RegionPlayers.Count > 0)
-                        foreach (var plr in data.RegionPlayers)
-                        {
-                            plr.SetBuff(UsedItem.BuffID, 300);
-
-                            plr.SendMessage($"钓鱼机 [c/ED756F:{data.ChestIndex}] 已使用{ItemIcon(UsedItem.ItemType)}" +
-                                TextGradient($"持续{UsedItem.Minutes}分钟:\n" +
-                                TextGradient($"[c/5F9DB8:-] {UsedItem.BuffDesc}")), color);
-                        }
+                    it.TurnToAir();
+                    slot = -1;
                 }
-                return;
+                else
+                {
+                    slot = i;
+                }
+                NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, i);
+                return true;
             }
         }
 
-        // 没找到，标记为永久缺失
         slot = -2;
+        return false;
     }
     #endregion
 
@@ -447,7 +394,7 @@ public class AutoFishing
     #region 自定义渔获
     private void CustomFishes(Item rodItem, ref bool allow)
     {
-        EnvManager.SetupTempPlayer(data,true);
+        EnvManager.SetupTempPlayer(data, true);
 
         foreach (var rule in Config.CustomFishes)
         {
@@ -486,6 +433,7 @@ public class AutoFishing
                         foreach (var plr in data.RegionPlayers)
                             plr.SendMessage(TextGradient($"钓到了:" +
                                                          $"{Lang.GetNPCNameValue(rule.NPCType)}"), color2);
+                    data.Monsters[rule.NPCType] = data.Monsters.GetValueOrDefault(rule.NPCType) + 1;
                 }
                 allow = true;
                 return;
@@ -493,10 +441,9 @@ public class AutoFishing
             else if (rule.ItemType > 0)
             {
                 if (data.Exclude.Contains(rule.ItemType)) continue;
-                var custom = new Item();
-                custom.SetDefaults(rule.ItemType);
+                var custom = ContentSamples.ItemsByType[rule.ItemType].Clone();
                 custom.stack = 1;
-                PutToAnim(custom);
+                FishPutToAnim(custom);
                 allow = true;
             }
         }
@@ -641,102 +588,10 @@ public class AutoFishing
     }
     #endregion
 
-    #region 物品存入动画排序
-    private void PutToAnim(Item item)
-    {
-        Vector2 from = new Vector2(data.LiqPos.X * 16 + 8, data.LiqPos.Y * 16 + 8);
-        bool queued = false;
-
-        // 1. 传输模式（多输出箱）
-        if (data.HasOut)
-        {
-            // 找出第一个能容纳物品的输出箱
-            int Index = -1;
-            foreach (int outIdx in data.OutChests)
-            {
-                var outChest = Main.chest[outIdx];
-                if (outChest != null && CanPut(outChest, item))
-                {
-                    Index = outIdx;
-                    break;
-                }
-            }
-
-            if (Index != -1)
-            {
-                var Out = Main.chest[Index];
-                var mainChest = Main.chest[data.ChestIndex];
-                AddMove(item, from, new Point(mainChest.x, mainChest.y), skipFake: false);
-                AddSparkle(new Point(mainChest.x, mainChest.y));
-                AddTransfer(item, new Vector2(mainChest.x * 16 + 8, mainChest.y * 16 + 8),
-                            new Point(Out.x, Out.y), Out.index, skipFake: true);
-                AddSparkle(new Point(Out.x, Out.y));
-                queued = true;
-            }
-        }
-
-        // 2. 主箱子
-        if (!queued)
-        {
-            var mainChest = Main.chest[data.ChestIndex];
-            if (mainChest != null)
-            {
-                AddTransfer(item, from, new Point(mainChest.x, mainChest.y), mainChest.index, skipFake: false);
-                AddSparkle(new Point(mainChest.x, mainChest.y));
-                queued = true;
-            }
-        }
-
-        // 3. 区域内其他箱子
-        if (!queued)
-        {
-            var region = TShock.Regions.GetRegionByName(data.RegName);
-            if (region != null)
-            {
-                var chests = Main.chest.AsSpan();
-                for (int i = 0; i < chests.Length; i++)
-                {
-                    var other = chests[i];
-                    if (other == null) continue;
-                    if (i == data.ChestIndex) continue;
-                    if (data.OutChests.Contains(i)) continue;
-                    if (!region.Area.Contains(other.x, other.y)) continue;
-
-                    AddTransfer(item, from, new Point(other.x, other.y), other.index, skipFake: false);
-                    AddSparkle(new Point(other.x, other.y));
-                    queued = true;
-                    break;
-                }
-
-            }
-        }
-
-        // 4. 掉落地面（无动画）
-        if (!queued)
-        {
-            int dropX = data.Pos.X * 16 + 8;
-            int dropY = data.Pos.Y * 16 + 8;
-            int index = Item.NewItem(null, new Vector2(dropX, dropY), Vector2.Zero, item.type);
-            if (data.RegionPlayers.Count > 0)
-                foreach (var plr in data.RegionPlayers)
-                    plr.SendData(PacketTypes.UpdateItemDrop, null, index);
-        }
-
-        // 5. 每次钓鱼产出后，主动将主箱中的积压物品转移到输出箱（如果传输模式开启）
-        var TransferInterval = Config.TransferInterval > 0 ? Config.TransferInterval : 5;
-        if (data.HasOut && !data.NeedPut && Plugin.Timer - data.LastPutFrame > TransferInterval * 60)
-        {
-            data.NeedPut = true;
-            PutQueue.Enqueue(data);
-            data.LastPutFrame = Plugin.Timer;
-        }
-    }
-    #endregion
-
     #region 动画执行队列方法
     private void AddMove(Item item, Vector2 from, Point toPos, bool skipFake)
     {
-        bool wasEmpty = data.AnimQueue.Count == 0;
+        bool wasEmpty = data.AnimQueue.Count == 0 && !Plugin.ActiveAnim.Contains(data);
         data.AnimQueue.Enqueue(new AnimReq
         {
             Type = AnimType.Move,
@@ -746,30 +601,28 @@ public class AutoFishing
             skipFake = skipFake,
             data = this.data
         });
-        if (wasEmpty)
-            Plugin.ActiveAnim.Add(data);
+        if (wasEmpty) Plugin.ActiveAnim.Add(data);
         if (data.AnimFrame == 0)
             data.AnimFrame = Plugin.Timer + 30;
     }
 
     private void AddSparkle(Point pos)
     {
-        bool wasEmpty = data.AnimQueue.Count == 0;
+        bool wasEmpty = data.AnimQueue.Count == 0 && !Plugin.ActiveAnim.Contains(data);
         data.AnimQueue.Enqueue(new AnimReq
         {
             Type = AnimType.Sparkle,
             toPos = pos,
             data = this.data
         });
-        if (wasEmpty)
-            Plugin.ActiveAnim.Add(data);
+        if (wasEmpty) Plugin.ActiveAnim.Add(data);
         if (data.AnimFrame == 0)
             data.AnimFrame = Plugin.Timer + 30;
     }
 
     private void AddTransfer(Item item, Vector2 from, Point toPos, int chestIdx, bool skipFake)
     {
-        bool wasEmpty = data.AnimQueue.Count == 0;
+        bool wasEmpty = data.AnimQueue.Count == 0 && !Plugin.ActiveAnim.Contains(data);
         data.AnimQueue.Enqueue(new AnimReq
         {
             Type = AnimType.Transfer,
@@ -780,8 +633,7 @@ public class AutoFishing
             skipFake = skipFake,
             data = this.data
         });
-        if (wasEmpty)
-            Plugin.ActiveAnim.Add(data);
+        if (wasEmpty) Plugin.ActiveAnim.Add(data);
         if (data.AnimFrame == 0)
             data.AnimFrame = Plugin.Timer + 30;
     }
@@ -883,7 +735,120 @@ public class AutoFishing
     }
     #endregion
 
-    #region 将主箱子中的非必备物品转移到输出箱（批量优化版）
+    #region 钓鱼产出物品存入动画排序
+    private void FishPutToAnim(Item fish)
+    {
+        Vector2 from = new Vector2(data.LiqPos.X * 16 + 8, data.LiqPos.Y * 16 + 8);
+        int index = -1;
+
+        // 1. 传输模式（多输出箱）
+        if (data.HasOut)
+        {
+            foreach (int outIdx in data.OutChests)
+            {
+                var outChest = Main.chest[outIdx];
+                if (outChest != null && CanPut(outChest, fish))
+                {
+                    index = outIdx;
+                    break;
+                }
+            }
+        }
+
+        // 2. 主箱子
+        if (index == -1)
+        {
+            var mainChest = Main.chest[data.ChestIndex];
+            if (mainChest != null && CanPut(mainChest, fish))
+                index = data.ChestIndex;
+        }
+
+        // 3. 区域内其他箱子
+        if (index == -1 && DataManager.RegionChests.TryGetValue(data.RegName, out var chests))
+        {
+            foreach (int i in chests)
+            {
+                if (i == data.ChestIndex) continue;
+                if (data.OutChests.Contains(i)) continue;
+                var other = Main.chest[i];
+                if (other != null && CanPut(other, fish))
+                {
+                    index = i;
+                    break;
+                }
+            }
+        }
+
+        if (index >= 0)
+        {
+            var chest = Main.chest[index];
+            if (chest != null)
+            {
+                // 添加飞行动画（假鱼 + 物品移动）
+                AddTransfer(fish, from, new Point(chest.x, chest.y), chest.index, skipFake: false);
+                AddSparkle(new Point(chest.x, chest.y));
+            }
+        }
+        else
+        {
+            // 没有箱子能放，直接掉落地面（无动画）
+            int dropX = data.Pos.X * 16 + 8;
+            int dropY = data.Pos.Y * 16 + 8;
+            int idx = Item.NewItem(null, new Vector2(dropX, dropY), Vector2.Zero, fish.type);
+            if (data.RegionPlayers.Count > 0)
+                foreach (var plr in data.RegionPlayers)
+                    plr.SendData(PacketTypes.UpdateItemDrop, null, idx);
+        }
+
+        // 触发批量转移（保持不变）
+        var TransferInterval = Config.TransferInterval > 0 ? Config.TransferInterval : 5;
+        if (data.HasOut && !data.NeedPut && Plugin.Timer - data.LastPutFrame > TransferInterval * 60)
+        {
+            data.NeedPut = true;
+            PutQueue.Enqueue(data);
+            data.LastPutFrame = Plugin.Timer;
+        }
+    }
+    #endregion
+
+    #region 判断是否可以存入 以便于产生动画
+    private static bool CanPut(Chest chest, Item item)
+    {
+        if (chest == null) return false;
+
+        // 钱币特殊处理（总是允许，因为会自动兑换）
+        if (Config.TransferCoins && item.IsACoin) return true;
+
+        var items = chest.item.AsSpan();
+        int need = item.stack;
+
+        for (int i = 0; i < items.Length; i++)
+        {
+            ref var slot = ref items[i];
+            if (!slot.IsAir && slot.type == item.type && slot.stack < slot.maxStack)
+            {
+                int canTake = slot.maxStack - slot.stack;
+                if (canTake >= need) return true;
+                need -= canTake;
+                if (need <= 0) return true;
+            }
+        }
+
+        // 检查空位
+        for (int i = 0; i < items.Length; i++)
+        {
+            if (items[i].IsAir)
+            {
+                need -= item.maxStack;
+                if (need <= 0) return true;
+            }
+        }
+
+        return false;
+    }
+    #endregion
+
+    #region 处理主箱物品方法（预估可转移后再清理）
     public static void TransferItem(MachData data)
     {
         if (!data.HasOut) return;
@@ -892,8 +857,8 @@ public class AutoFishing
         var mainChest = Main.chest[data.ChestIndex];
         if (mainChest == null) return;
 
-        // 1. 收集需要转移的物品，按类型合并数量
-        var toMove = new Dictionary<int, int>(); // type -> total stack
+        var movedMap = new Dictionary<int, int>();
+
         var items = mainChest.item.AsSpan();
         for (int i = 0; i < items.Length; i++)
         {
@@ -901,97 +866,128 @@ public class AutoFishing
             if (it == null || it.IsAir) continue;
             if (SafeItem(it, data)) continue;
 
-            int type = it.type;
-            toMove.TryGetValue(type, out int old);
-            toMove[type] = old + it.stack;
-            it.TurnToAir();                     // 清空主箱槽位（后续若转移失败会回填）
-            NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, data.ChestIndex, i);
-        }
+            int oldType = it.type;
+            int oldStack = it.stack;
+            bool isCoin = it.IsACoin;  // 提前保存
 
-        if (toMove.Count == 0) return;
+            // 调用通用放置逻辑，不允许回退到主箱
+            PutWithFallback(it, -1, data, false);
 
-        // 2. 批量尝试每个输出箱
-        var remaining = toMove;
-        foreach (int outIdx in data.OutChests)
-        {
-            var outChest = Main.chest[outIdx];
-            if (outChest == null) continue;
-
-            remaining = PutBatch(outChest, remaining);
-            if (remaining.Count == 0) break;
-        }
-
-        // 3. 如果有剩余物品，回填到主箱（或掉落）
-        if (remaining.Count > 0)
-        {
-            foreach (var kv in remaining)
+            int moved = oldStack - it.stack;
+            if (moved > 0)
             {
-                int type = kv.Key;
-                int stack = kv.Value;
-                var leftover = new Item();
-                leftover.SetDefaults(type);
-                leftover.stack = stack;
+                // 更新主箱槽位（因为物品已从主箱移除或减少）
+                if (it.stack <= 0)
+                    it.TurnToAir();
+                NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, data.ChestIndex, i);
 
-                // 回填到主箱（TryPutIntoChest 会处理堆叠和空位）
-                if (!TryPutIntoChest(mainChest, leftover))
+                if (!isCoin) // 排除钱币
                 {
-                    // 主箱也放不下，掉落地面
-                    int dropX = data.Pos.X * 16 + 8;
-                    int dropY = data.Pos.Y * 16 + 8;
-                    Item.NewItem(null, new Vector2(dropX, dropY), Vector2.Zero, type, stack);
+                    movedMap.TryGetValue(oldType, out int cnt);
+                    movedMap[oldType] = cnt + moved;
                 }
             }
         }
 
-        // 4. 播报转移结果（只播报成功转移的物品类型，排除钱币）
-        if (data.RegionPlayers.Count > 0)
+        // 批量播报
+        if (Config.ShowTransferMsg && data.RegionPlayers.Count > 0 && movedMap.Count > 0)
         {
-            var movedTypes = toMove.Keys
-                .Where(t => !remaining.ContainsKey(t) && !IsCoinType(t))
-                .ToList();
-            if (movedTypes.Count > 0)
-            {
-                string msg = TextGradient("已转移:") + string.Join(" ", movedTypes.Select(t => ItemIcon(t)));
-                foreach (var plr in data.RegionPlayers)
-                    plr.SendMessage(msg, color);
-            }
+            string msg = TextGradient("已转移:") + string.Join(" ", movedMap.Select(kv => ItemIcon(kv.Key, kv.Value)));
+            foreach (var plr in data.RegionPlayers)
+                plr.SendMessage(msg, color);
         }
     }
     #endregion
 
-    #region 批量将物品放入箱子，返回无法放入的物品字典
-    private static Dictionary<int, int> PutBatch(Chest chest, Dictionary<int, int> items)
+    #region 将物品存入箱子（钓鱼产出）
+    /// <summary>
+    /// 通用物品放置方法，按优先级尝试：指定箱 → 输出箱 → 主箱（可选） → 区域其他箱 → 地面。
+    /// 会尽可能将物品全部分散到多个箱子，直到全部转移或无处可放。
+    /// </summary>
+    /// <param name="item">物品（会被修改，转移后 stack 会减少）</param>
+    /// <param name="preferIdx">优先尝试的箱子索引，-1 表示不优先</param>
+    /// <param name="data">钓鱼机数据</param>
+    /// <param name="allowMain">是否允许回退到主箱</param>
+    /// <returns>最后一次成功放入的箱子索引，-2 表示掉落地面，-3 表示未做任何操作（物品为空）</returns>
+    public static int PutWithFallback(Item item, int preferIdx, MachData data, bool allowMain)
     {
-        if (chest == null) return items;
-        var result = new Dictionary<int, int>();
+        if (item == null || item.IsAir) return -3;
 
-        foreach (var kv in items)
+        int lastTarget = -2;
+
+        // 1. 优先箱
+        if (preferIdx != -1)
         {
-            int type = kv.Key;
-            int amount = kv.Value;
-            var tempItem = new Item();
-            tempItem.SetDefaults(type);
-            tempItem.stack = amount;
-
-            if (TryPutIntoChest(chest, tempItem))
+            var prefer = Main.chest[preferIdx];
+            if (prefer != null && TryPutIntoChest(prefer, item))
             {
-                // 部分放入或全部放入后 tempItem.stack 会减少
-                if (tempItem.stack > 0)
-                    result[type] = tempItem.stack;
-            }
-            else
-            {
-                result[type] = amount;
+                lastTarget = preferIdx;
+                if (item.stack == 0) return lastTarget;
             }
         }
-        return result;
+
+        // 2. 输出箱（循环所有输出箱，直到物品全部分配或没有更多输出箱）
+        if (data.HasOut)
+        {
+            foreach (int outIdx in data.OutChests)
+            {
+                if (outIdx == preferIdx) continue;
+                var outChest = Main.chest[outIdx];
+                if (outChest == null) continue;
+                if (TryPutIntoChest(outChest, item))
+                {
+                    lastTarget = outIdx;
+                    if (item.stack == 0) return lastTarget;
+                }
+            }
+        }
+
+        // 3. 主箱（若允许）
+        if (allowMain)
+        {
+            var mainChest = Main.chest[data.ChestIndex];
+            if (mainChest != null && TryPutIntoChest(mainChest, item))
+            {
+                lastTarget = data.ChestIndex;
+                if (item.stack == 0) return lastTarget;
+            }
+        }
+
+        // 4. 区域内其他箱子（排除主箱和输出箱）
+        if (DataManager.RegionChests.TryGetValue(data.RegName, out var chestSet))
+        {
+            foreach (int i in chestSet)
+            {
+                if (i == data.ChestIndex) continue;
+                if (data.OutChests.Contains(i)) continue;
+                var other = Main.chest[i];
+                if (other == null) continue;
+                if (TryPutIntoChest(other, item))
+                {
+                    lastTarget = i;
+                    if (item.stack == 0) return lastTarget;
+                }
+            }
+        }
+
+        // 5. 最终掉落地面（仅当物品还有剩余时）
+        if (item.stack > 0)
+        {
+            int dropX = data.Pos.X * 16 + 8;
+            int dropY = data.Pos.Y * 16 + 8;
+            Item.NewItem(null, new Vector2(dropX, dropY), Vector2.Zero, item.type, item.stack);
+            item.TurnToAir();
+            lastTarget = -2;
+        }
+
+        return lastTarget;
     }
     #endregion
 
     #region 物品放入箱子方法
     public static bool TryPutIntoChest(Chest chest, Item item)
     {
-        if (item.IsAir) return false;
+        if (item == null || item.IsAir) return true;
 
         // 钱币特殊处理（自动兑换）
         if (Config.TransferCoins && item.IsACoin)
@@ -1050,22 +1046,20 @@ public class AutoFishing
 
         Span<Item> items = chest.item.AsSpan();
         long total = 0;
-        int freeCnt = 0;
-        int coinSlotCnt = 0;
+        int free = 0;          // 空位 + 钱币格子（因为之后会清空）
 
-        // 统计箱内钱币总值
+        // 一次遍历：统计总值 + 计数可用格子
         for (int i = 0; i < items.Length; i++)
         {
             ref Item it = ref items[i];
             if (it.IsAir)
             {
-                freeCnt++;
+                free++;
                 continue;
             }
-
             if (it.IsACoin)
             {
-                coinSlotCnt++;
+                free++; // 钱币格子后续会被清空，视为可用
                 total += it.type switch
                 {
                     ItemID.CopperCoin => it.stack,
@@ -1077,7 +1071,7 @@ public class AutoFishing
             }
         }
 
-        // 加上要存入的钱币
+        // 加上新钱币
         total += coin.type switch
         {
             ItemID.CopperCoin => coin.stack,
@@ -1087,25 +1081,26 @@ public class AutoFishing
             _ => 0
         };
 
-        int[] cnts = Terraria.Utils.CoinsSplit(total); // [铜,银,金,铂]
+        // 拆分为各面额数量
+        int[] cnts = Terraria.Utils.CoinsSplit(total);
         int need = 0;
         for (int i = 0; i < 4; i++)
             if (cnts[i] > 0)
                 need += (cnts[i] + 9999 - 1) / 9999;
 
-        if (freeCnt + coinSlotCnt < need) return false;
+        if (free < need) return false;
 
-        // 清空所有钱币格子
+        // 清空所有钱币格子（发送网络包）
         for (int i = 0; i < items.Length; i++)
         {
-            ref Item it = ref items[i];
-            if (it.IsACoin)
+            if (items[i].IsACoin)
             {
-                it.TurnToAir();
+                items[i].TurnToAir();
                 NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, i);
             }
         }
 
+        // 按目标分布填充
         int[] ids = { ItemID.CopperCoin, ItemID.SilverCoin, ItemID.GoldCoin, ItemID.PlatinumCoin };
         int slot = 0;
         for (int t = 0; t < 4; t++)
@@ -1116,7 +1111,7 @@ public class AutoFishing
                 while (slot < items.Length && !items[slot].IsAir) slot++;
                 if (slot >= items.Length) return false;
                 int take = Math.Min(rem, 9999);
-                items[slot].SetDefaults(ids[t]);
+                items[slot] = AutoFishing.coin[t].Clone(); // 替换原来的 SetDefaults
                 items[slot].stack = take;
                 NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, chest.index, slot);
                 rem -= take;
@@ -1125,112 +1120,6 @@ public class AutoFishing
         }
 
         coin.TurnToAir();
-        return true;
-    }
-    private static bool IsCoinType(int type)
-    {
-        return type >= ItemID.CopperCoin && type <= ItemID.PlatinumCoin;
-    }
-    #endregion
-
-    #region 判断是否可以存入 以便于产生动画
-    private static bool CanPut(Chest chest, Item item)
-    {
-        if (chest == null) return false;
-
-        // 钱币特殊处理（总是允许，因为会自动兑换）
-        if (Config.TransferCoins && item.IsACoin) return true;
-
-        var items = chest.item.AsSpan();
-        int need = item.stack;
-
-        for (int i = 0; i < items.Length; i++)
-        {
-            ref var slot = ref items[i];
-            if (!slot.IsAir && slot.type == item.type && slot.stack < slot.maxStack)
-            {
-                int canTake = slot.maxStack - slot.stack;
-                if (canTake >= need) return true;
-                need -= canTake;
-                if (need <= 0) return true;
-            }
-        }
-
-        // 检查空位
-        for (int i = 0; i < items.Length; i++)
-        {
-            if (items[i].IsAir)
-            {
-                need -= item.maxStack;
-                if (need <= 0) return true;
-            }
-        }
-
-        return false;
-    }
-    #endregion
-
-    #region 将物品存入箱子，失败时依次尝试主箱、区域内其他箱子、掉落地面
-    /// <summary>
-    /// 将物品存入箱子，失败时依次尝试主箱、区域内其他箱子、掉落地面
-    /// </summary>
-    /// <param name="item">要存入的物品（会被修改）</param>
-    /// <param name="index">优先尝试的目标箱子索引（如输出箱）</param>
-    /// <param name="data">钓鱼机数据（提供主箱索引、区域名、坐标等）</param>
-    /// <returns>是否成功放置（掉落地面也算成功，物品已消失）</returns>
-    public static bool PlaceFallback(Item item, int index, MachData data)
-    {
-        if (item == null || item.IsAir) return true;
-
-        // 1. 尝试目标箱子（动画选定的）
-        var target = Main.chest[index];
-        if (target != null && TryPutIntoChest(target, item))
-            return true;
-
-        // 2. 如果开启了传输模式，依次尝试其他输出箱
-        if (data.HasOut)
-        {
-            foreach (int outIdx in data.OutChests)
-            {
-                if (outIdx == index) continue; // 跳过已尝试的目标箱
-                var outChest = Main.chest[outIdx];
-                if (outChest != null && TryPutIntoChest(outChest, item))
-                    return true;
-            }
-        }
-
-        // 2. 回退到主箱
-        var mainChest = Main.chest[data.ChestIndex];
-        if (mainChest != null && TryPutIntoChest(mainChest, item))
-            return true;
-
-        // 3. 尝试区域内其他箱子
-        var region = TShock.Regions.GetRegionByName(data.RegName);
-        if (region != null)
-        {
-            var chests = Main.chest.AsSpan();
-            for (int i = 0; i < chests.Length; i++)
-            {
-                var other = chests[i];
-                if (other == null) continue;
-                if (i == data.ChestIndex) continue;  // 跳过主箱
-                if (i == index) continue;   // 跳过目标箱
-                if (!region.Area.Contains(other.x, other.y)) continue;
-                if (TryPutIntoChest(other, item))
-                    return true;
-            }
-        }
-
-        // 4. 最终掉落地面
-        int dropX = data.Pos.X * 16 + 8;
-        int dropY = data.Pos.Y * 16 + 8;
-        int idx = Item.NewItem(null, new Vector2(dropX, dropY), Vector2.Zero, item.type, item.stack);
-        if (data.RegionPlayers.Count > 0)
-        {
-            foreach (var plr in data.RegionPlayers)
-                plr.SendData(PacketTypes.UpdateItemDrop, null, idx);
-        }
-        item.TurnToAir();
         return true;
     }
     #endregion

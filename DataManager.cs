@@ -18,7 +18,8 @@ internal class DataManager
     public static Dictionary<string, MachData> MachByRegName = new();
     // 查找传输箱方法
     public static Dictionary<int, HashSet<MachData>> OutChestMap = new();
-
+    // 区域名 -> 该区域内所有箱子索引的 HashSet
+    public static Dictionary<string, HashSet<int>> RegionChests = new();
 
     public static MachData? FindTile(Point pos)
         => MachByPos.TryGetValue(pos, out var data) ? data : null;
@@ -260,6 +261,54 @@ internal class DataManager
     }
     #endregion
 
+    #region 更新区域附近箱子方法
+    public static void UpdateRegionChests(MachData data)
+    {
+        var region = TShock.Regions.GetRegionByName(data.RegName);
+        if (region == null) return;
+
+        var chestsInRegion = new HashSet<int>();
+        // 遍历所有箱子（Main.chest 数组长度 8000）
+        for (int i = 0; i < Main.chest.Length; i++)
+        {
+            var chest = Main.chest[i];
+            if (chest != null && region.Area.Contains(chest.x, chest.y))
+                chestsInRegion.Add(i);
+        }
+        RegionChests[data.RegName] = chestsInRegion;
+    }
+
+    public static void UpdateAllRegionChests()
+    {
+        // 收集所有区域名
+        var regionNames = Machines.Select(m => m.RegName).Distinct().ToList();
+        if (regionNames.Count == 0) return;
+
+        // 临时字典
+        var temp = new Dictionary<string, HashSet<int>>();
+        foreach (var name in regionNames)
+            temp[name] = new HashSet<int>();
+
+        // 一次遍历所有箱子
+        for (int i = 0; i < Main.chest.Length; i++)
+        {
+            var chest = Main.chest[i];
+            if (chest == null) continue;
+
+            foreach (var name in regionNames)
+            {
+                var region = TShock.Regions.GetRegionByName(name);
+                if (region != null && region.Area.Contains(chest.x, chest.y))
+                    temp[name].Add(i);
+            }
+        }
+
+        // 更新全局缓存
+        foreach (var kv in temp)
+            RegionChests[kv.Key] = kv.Value;
+    }
+    #endregion
+
     #region 清空所有
     public static void Clear()
     {
@@ -281,6 +330,7 @@ internal class DataManager
         MachByRegName.Clear();
         OutChestMap.Clear();
         FishSched.Clear();
+        RegionChests.Clear();
 
         if (Directory.Exists(CacheDir))
             Directory.Delete(CacheDir, true);
