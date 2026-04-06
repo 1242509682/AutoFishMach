@@ -705,7 +705,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         if (!Config.Enabled) return;
 
         var plr = TShock.Players[args.Who];
-        if (plr == null || !IsAfmRegion(plr.CurrentRegion.Name)) return;
+        if (plr == null || plr.CurrentRegion == null ||
+            !IsAfmRegion(plr.CurrentRegion.Name)) return;
 
         if (plr.ContainsData("set")) plr.RemoveData("set");
         if (plr.ContainsData("info")) plr.RemoveData("info");
