@@ -267,8 +267,8 @@ internal class DataManager
         var region = TShock.Regions.GetRegionByName(data.RegName);
         if (region == null) return;
 
+        // 1. 重建区域箱子缓存
         var chestsInRegion = new HashSet<int>();
-        // 遍历所有箱子（Main.chest 数组长度 8000）
         for (int i = 0; i < Main.chest.Length; i++)
         {
             var chest = Main.chest[i];
@@ -276,6 +276,18 @@ internal class DataManager
                 chestsInRegion.Add(i);
         }
         RegionChests[data.RegName] = chestsInRegion;
+
+        // 2. 清理该钓鱼机中不存在的输出箱
+        bool outChanged = false;
+        foreach (int outIdx in data.OutChests.ToList())
+        {
+            if (Main.chest[outIdx] == null)
+            {
+                RemoveOutChest(data, outIdx);
+                outChanged = true;
+            }
+        }
+        if (outChanged) data.ClearAnim();
     }
 
     public static void UpdateAllRegionChests()
@@ -284,12 +296,12 @@ internal class DataManager
         var regionNames = Machines.Select(m => m.RegName).Distinct().ToList();
         if (regionNames.Count == 0) return;
 
-        // 临时字典
+        // 临时字典用于重建缓存
         var temp = new Dictionary<string, HashSet<int>>();
         foreach (var name in regionNames)
             temp[name] = new HashSet<int>();
 
-        // 一次遍历所有箱子
+        // 一次遍历所有箱子，构建每个区域的箱子索引集合
         for (int i = 0; i < Main.chest.Length; i++)
         {
             var chest = Main.chest[i];
@@ -306,6 +318,21 @@ internal class DataManager
         // 更新全局缓存
         foreach (var kv in temp)
             RegionChests[kv.Key] = kv.Value;
+
+        // 清理所有钓鱼机中不存在的输出箱
+        foreach (var data in Machines)
+        {
+            bool outChanged = false;
+            foreach (int outIdx in data.OutChests.ToList())
+            {
+                if (Main.chest[outIdx] == null)
+                {
+                    RemoveOutChest(data, outIdx);
+                    outChanged = true;
+                }
+            }
+            if (outChanged) data.ClearAnim();
+        }
     }
     #endregion
 

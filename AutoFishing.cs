@@ -111,8 +111,7 @@ public class AutoFishing
             power += Config.ChumBucketPower;
 
         // 7. 消耗鱼饵
-        if (!ConsumeBait(baitSlot, baitItem, power))
-            return;
+        ConsumeBait(baitSlot, baitItem, power);
 
         // 8. 自定义渔获
         bool allow = false;
@@ -368,9 +367,9 @@ public class AutoFishing
     #endregion
 
     #region 消耗鱼饵
-    private bool ConsumeBait(int slot, Item baitItem, int power)
+    private void ConsumeBait(int slot, Item baitItem, int power)
     {
-        if (baitItem == null || baitItem.IsAir) return false;
+        if (baitItem == null || baitItem.IsAir) return;
 
         // 原版概率：消耗概率 = 1 / (1 + power/6)
         float chance = 1f / (1f + power / 6f);
@@ -385,9 +384,7 @@ public class AutoFishing
                 data.BaitSlot = -1;
             }
             NetMessage.SendData((int)PacketTypes.ChestItem, -1, -1, null, data.ChestIndex, slot);
-            return true;
         }
-        return true; // 原版未消耗也返回 true，表示钓鱼成功
     }
     #endregion
 
@@ -738,7 +735,6 @@ public class AutoFishing
     #region 钓鱼产出物品存入动画排序
     private void FishPutToAnim(Item fish)
     {
-        Vector2 from = new Vector2(data.LiqPos.X * 16 + 8, data.LiqPos.Y * 16 + 8);
         int index = -1;
 
         // 1. 传输模式（多输出箱）
@@ -763,18 +759,27 @@ public class AutoFishing
                 index = data.ChestIndex;
         }
 
-        // 3. 区域内其他箱子
-        if (index == -1 && DataManager.RegionChests.TryGetValue(data.RegName, out var chests))
+        // 3. 区域内其他箱子（仅从缓存读取，缓存不存在则重建后重试）
+        if (index == -1)
         {
-            foreach (int i in chests)
+            if (!DataManager.RegionChests.TryGetValue(data.RegName, out var chests))
             {
-                if (i == data.ChestIndex) continue;
-                if (data.OutChests.Contains(i)) continue;
-                var other = Main.chest[i];
-                if (other != null && CanPut(other, fish))
+                DataManager.UpdateRegionChests(data);
+                DataManager.RegionChests.TryGetValue(data.RegName, out chests);
+            }
+
+            if (chests != null)
+            {
+                foreach (int i in chests)
                 {
-                    index = i;
-                    break;
+                    if (i == data.ChestIndex) continue;
+                    if (data.OutChests.Contains(i)) continue;
+                    var other = Main.chest[i];
+                    if (other != null && CanPut(other, fish))
+                    {
+                        index = i;
+                        break;
+                    }
                 }
             }
         }
@@ -785,6 +790,7 @@ public class AutoFishing
             if (chest != null)
             {
                 // 添加飞行动画（假鱼 + 物品移动）
+                Vector2 from = new Vector2(data.LiqPos.X * 16 + 8, data.LiqPos.Y * 16 + 8);
                 AddTransfer(fish, from, new Point(chest.x, chest.y), chest.index, skipFake: false);
                 AddSparkle(new Point(chest.x, chest.y));
             }
@@ -953,8 +959,15 @@ public class AutoFishing
             }
         }
 
-        // 4. 区域内其他箱子（排除主箱和输出箱）
-        if (DataManager.RegionChests.TryGetValue(data.RegName, out var chestSet))
+        // 4. 如果区域内箱子缓存不存在 重建后尝试
+        if (!DataManager.RegionChests.TryGetValue(data.RegName, out var chestSet))
+        {
+            DataManager.UpdateRegionChests(data);
+            DataManager.RegionChests.TryGetValue(data.RegName, out chestSet);
+        }
+
+        // 区域内其他箱子（排除主箱和输出箱）
+        if (chestSet != null)
         {
             foreach (int i in chestSet)
             {
