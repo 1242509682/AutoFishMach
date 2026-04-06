@@ -199,8 +199,9 @@ internal class MyCommand
                         }
 
                         TPHelp(plr, all);
-                        plr.SendMessage(TextGradient("传到钓鱼机: /afm tp 编号"), color);
-                        plr.SendMessage(TextGradient("依序传输箱: /afm tp 编号 [c/FF8374:c] 或 序号\n"), color);
+                        plr.SendMessage(TextGradient("传送指定钓鱼机: /afm tp 钓鱼机编号"), color);
+                        plr.SendMessage(TextGradient("依序传送传输箱: /afm tp 钓鱼机编号 [c/FF8374:c]"), color);
+                        plr.SendMessage(TextGradient("传送指定传输箱: /afm tp 钓鱼机编号 [c/FF8374:c] 1\n"), color);
                         return;
                     }
 
@@ -245,7 +246,9 @@ internal class MyCommand
                                 return;
                             }
 
-                            if (plr.Teleport(outChest.x * 16 - 8, outChest.y * 16 - 8))
+                            int targetX = outChest.x * 16 + 16;
+                            int targetY = (outChest.y - 2) * 16;
+                            if (plr.Teleport(targetX, targetY))
                             {
                                 plr.SendMessage(TextGradient($"\n已传送 [{idx + 1}/{data.OutChests.Count}] 个传输箱"), color);
                                 plr.SetData(key, idx + 1);
@@ -265,7 +268,10 @@ internal class MyCommand
                                 return;
                             }
 
-                            if (plr.Teleport(outChest.x * 16 - 8, outChest.y * 16 - 8))
+
+                            int targetX = outChest.x * 16 + 16;
+                            int targetY = (outChest.y - 2) * 16;
+                            if (plr.Teleport(targetX, targetY))
                             {
                                 plr.SendMessage(TextGradient($"\n已传送第 {outIdx} 个传输箱"), color);
                             }
@@ -277,8 +283,10 @@ internal class MyCommand
                         return;
                     }
 
-                    // 无第三个参数，传送到主箱
-                    if (plr.Teleport(data.Pos.X * 16 - 8, data.Pos.Y * 16 - 8))
+                    // 无第三个参数，传送到主箱正上方 2 格
+                    int mainX = data.Pos.X * 16 + 16;
+                    int mainY = (data.Pos.Y - 2) * 16;
+                    if (plr.Teleport(mainX, mainY))
                         plr.SendMessage(TextGradient($"\n已传送钓鱼机: [c/ED756F:{chestIdx}]"), color);
                 }
                 break;
@@ -287,7 +295,7 @@ internal class MyCommand
             case "out":
             case "sc":
             case "传输":
-                HandleOutCommand(args);
+                HandleOut(args);
                 break;
 
             case "i":
@@ -1224,11 +1232,19 @@ internal class MyCommand
     }
     #endregion
 
-    #region 传输箱管理指令（批量）
-    private static void HandleOutCommand(CommandArgs args)
+    #region 批量设置传输箱指令
+    private static void HandleOut(CommandArgs args)
     {
         var plr = args.Player;
         if (!plr.RealPlayer) return;
+
+        // 如果已有会话，允许在任何地方取消（无需区域检查）
+        if (args.Parameters.Count == 1 && OutSel.ContainsKey(plr.Name))
+        {
+            OutSel.Remove(plr.Name);
+            plr.SendMessage(TextGradient("\n已退出传输箱记录模式"), color);
+            return;
+        }
 
         if (!Config.TransferMode && !IsAdmin(plr))
         {
@@ -1246,7 +1262,7 @@ internal class MyCommand
         var data = FindRegion(plr.CurrentRegion.Name);
         if (data == null)
         {
-            plr.SendMessage(TextGradient("\n未找到钓鱼机数据"), color);
+            plr.SendMessage(TextGradient("\n当前区域,未找到钓鱼机数据"), color);
             return;
         }
 
@@ -1256,132 +1272,68 @@ internal class MyCommand
             return;
         }
 
-        // 无参数：切换记录模式
-        if (args.Parameters.Count == 1)
-        {
-            if (outPend.ContainsKey(plr.Name))
-            {
-                // 已有记录：清空并退出模式
-                outPend.Remove(plr.Name);
-                plr.SendMessage(TextGradient("\n已退出传输箱批量记录模式"), color);
-            }
-            else
-            {
-                // 无记录：进入记录模式
-                outPend[plr.Name] = new HashSet<int>();
-                plr.SendMessage(TextGradient("\n已进入传输箱批量记录模式\n"), color);
-                plr.SendMessage(TextGradient("请离开区域打开需要的传输箱"), color);
-                plr.SendMessage(TextGradient($"批量添加: /{afm} o add"), color);
-                plr.SendMessage(TextGradient($"批量移除: /{afm} o del"), color);
-                plr.SendMessage(TextGradient($"再次输入 /{afm} o 清空记录并退出模式"), color);
-            }
-            return;
-        }
-
-        // 有子命令，必须有记录
-        string sub = args.Parameters[1].ToLower();
-        if (!outPend.TryGetValue(plr.Name, out var set) || set.Count == 0)
-        {
-            plr.SendMessage(TextGradient($"没有待处理的传输箱操作记录"), color);
-            plr.SendMessage(TextGradient($"请先使用 /afm o 进入记录模式并打开箱子"), color);
-            plr.SendMessage(TextGradient($"批量添加: /{afm} o add"), color);
-            plr.SendMessage(TextGradient($"批量移除: /{afm} o del"), color);
-            plr.SendMessage(TextGradient($"再次输入 /{afm} o 清空记录并退出模式"), color);
-            return;
-        }
-
-        switch (sub)
-        {
-            case "add":
-                AddOut(plr, data, set);
-                break;
-            case "del":
-                DelOut(plr, data, set);
-                break;
-            default:
-                plr.SendMessage(TextGradient($"批量添加: /{afm} o add"), color);
-                plr.SendMessage(TextGradient($"批量移除: /{afm} o del"), color);
-                plr.SendMessage(TextGradient($"再次输入 /{afm} o 清空记录并退出模式"), color);
-                break;
-        }
+        // 创建新会话
+        var sel = new OutSelData(plr.Name, data.RegName, Config.OutSelTimer);
+        OutSel[plr.Name] = sel;
+        plr.SendMessage(TextGradient($"\n本功能支持跨区域转移物品,单机多箱,多机共用1箱"), color);
+        plr.SendMessage(TextGradient($"请在{Config.OutSelTimer} 秒内:打开任意地点的箱子"), color);
+        plr.SendMessage(TextGradient($"取消本次记录请再次输入:/{afm} o"), color);
     }
+    #endregion
 
-    /// <summary>批量添加传输箱</summary>
-    private static void AddOut(TSPlayer plr, MachData data, HashSet<int> set)
+    #region 处理传输箱选择模式定时
+    public static void OutPendTimeOut(OutSelData sel)
     {
-        int added = 0, skipped = 0;
-        List<int> toRemove = new List<int>();
-        foreach (int chestIdx in set.ToList())
+        OutSel.Remove(sel.PlayerName);
+
+        var data = FindRegion(sel.RegionName);
+        if (data == null) return;
+
+        if (sel.LogChests.Count == 0) return;
+
+        TSPlayer? plr = TShock.Players.FirstOrDefault(p => p != null && p.Name == sel.PlayerName);
+
+        int added = 0, removed = 0, skipped = 0;
+
+        foreach (int idx in sel.LogChests.ToList())
         {
-            // 合法性检查
-            if (chestIdx == data.ChestIndex)
+            if (data.OutChests.Contains(idx))
             {
-                plr.SendMessage(TextGradient($"箱子 {chestIdx} 是钓鱼机自身，跳过"), color);
-                skipped++;
-                toRemove.Add(chestIdx);
-                continue;
-            }
-            if (FindChest(chestIdx) != null)
-            {
-                plr.SendMessage(TextGradient($"箱子 {chestIdx} 是另一台钓鱼机的主箱，跳过"), color);
-                skipped++;
-                toRemove.Add(chestIdx);
-                continue;
-            }
-            if (data.OutChests.Contains(chestIdx))
-            {
-                plr.SendMessage(TextGradient($"箱子 {chestIdx} 已是传输箱，跳过"), color);
-                skipped++;
-                toRemove.Add(chestIdx);
-                continue;
-            }
-            if (Config.MaxOutChest > 0 && data.OutChests.Count >= Config.MaxOutChest && !IsAdmin(plr))
-            {
-                plr.SendMessage(TextGradient($"已达到传输箱上限 {Config.MaxOutChest}，剩余箱子被跳过"), color);
-                break;
-            }
-
-            DataManager.AddOutChest(data, chestIdx);
-            added++;
-            toRemove.Add(chestIdx);
-        }
-
-        // 移除已处理的记录
-        foreach (int idx in toRemove)
-            set.Remove(idx);
-
-        data.ClearAnim();
-        plr.SendMessage(TextGradient($"\n批量添加完成：成功 {added} 个，跳过 {skipped} 个"), color);
-        outPend.Remove(plr.Name);
-    }
-
-    /// <summary>批量移除传输箱</summary>
-    private static void DelOut(TSPlayer plr, MachData data, HashSet<int> set)
-    {
-        int removed = 0, notFound = 0;
-        List<int> toRemove = new List<int>();
-        foreach (int chestIdx in set.ToList())
-        {
-            if (data.OutChests.Contains(chestIdx))
-            {
-                DataManager.RemoveOutChest(data, chestIdx);
+                DataManager.RemoveOutChest(data, idx);
                 removed++;
-                toRemove.Add(chestIdx);
             }
             else
             {
-                notFound++;
-                plr.SendMessage(TextGradient($"箱子 {chestIdx} 不是传输箱，已跳过（仍保留在记录中）"), color);
+                // 合法性检查
+                if (idx == data.ChestIndex)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                if (FindChest(idx) != null)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                if (Config.MaxOutChest > 0 && data.OutChests.Count >= Config.MaxOutChest)
+                {
+                    skipped++;
+                    continue;
+                }
+
+                DataManager.AddOutChest(data, idx);
+                added++;
             }
         }
 
-        // 仅移除成功删除的箱子记录
-        foreach (int idx in toRemove)
-            set.Remove(idx);
-
-        data.ClearAnim();
-        plr.SendMessage(TextGradient($"\n批量移除完成：成功移除 {removed} 个，不存在 {notFound} 个"), color);
-        outPend.Remove(plr.Name);
+        if (plr != null)
+        {
+            string msg = TextGradient($"传输箱：添加 {added} 个,移除 {removed} 个");
+            if (skipped > 0) msg += TextGradient($",跳过 {skipped} 个");
+            plr.SendMessage(msg, color);
+        }
     }
     #endregion
 

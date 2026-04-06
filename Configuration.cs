@@ -10,26 +10,30 @@ namespace FishMach;
 internal class Configuration
 {
     #region 配置项成员
-    [JsonProperty("自定渔获进度参考", Order = -15)]
+    [JsonProperty("自定渔获进度参考", Order = -20)]
     public List<string> Reference = new();
-    [JsonProperty("使用方法", Order = -14)]
+    [JsonProperty("使用方法", Order = -19)]
     public List<string> Text { get; set; } = new();
-    [JsonProperty("插件开关", Order = -13)]
+    [JsonProperty("插件开关", Order = -18)]
     public bool Enabled { get; set; } = true;
-    [JsonProperty("钓鱼机数", Order = -12)]
+    [JsonProperty("钓鱼机上限", Order = -17)]
     public int MaxMachines { get; set; } = 0; // 0表示无限制
-    [JsonProperty("传输模式", Order = -11)]
+
+    [JsonProperty("传输模式", Order = -16)]
     public bool TransferMode { get; set; } = true;
-    [JsonProperty("传输间隔", Order = -10)]
+    [JsonProperty("传输间隔", Order = -15)]
     public int TransferInterval { get; set; } = 5;
-    [JsonProperty("同时传输", Order = -9)]
+    [JsonProperty("同时传输", Order = -14)]
     public int TransferStack { get; set; } = 5;
-    [JsonProperty("传输箱数", Order = -8)]
+    [JsonProperty("传输箱上限", Order = -13)]
     public int MaxOutChest { get; set; } = 3;
-    [JsonProperty("传输钱币", Order = -7)]
+    [JsonProperty("传输钱币", Order = -12)]
     public bool TransferCoins { get; set; } = true;
-    [JsonProperty("传输消息")]
-    public bool ShowTransferMsg { get; set; } = true;
+    [JsonProperty("传输消息", Order = -11)]
+    public bool ShowTransferMsg { get; set; } = false;
+    [JsonProperty("传输箱选择计时", Order = -10)]
+    public int OutSelTimer { get; set; } = 30;
+
     [JsonProperty("钓任务鱼", Order = -6)]
     public bool QuestFish { get; set; } = true;
     [JsonProperty("假鱼动画", Order = -5)]

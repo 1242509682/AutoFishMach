@@ -20,7 +20,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     public static string PluginName => "自动钓鱼机";
     public override string Name => PluginName;
     public override string Author => "羽学";
-    public override Version Version => new(1, 1, 7);
+    public override Version Version => new(1, 1, 8);
     public override string Description => "使用/afm 指令指定一个箱子作为自动钓鱼机";
     #endregion
 
@@ -225,7 +225,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                         break;
                     case AnimType.Transfer:
                         engine.PlayMove(req.item, req.from, req.toPos, req.skipFake);
-                        AutoFishing.PutWithFallback(req.item, req.chestIdx, req.data,true);
+                        AutoFishing.PutWithFallback(req.item, req.chestIdx, req.data, true);
                         break;
                 }
                 data.AnimFrame = Timer + 60; // 每台机器独立计时
@@ -252,6 +252,38 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             AutoFishing.TransferItem(data);
             data.NeedPut = false;
             count++;
+        }
+
+        // 处理传输箱批量记录模式（倒计时 + 超时）
+        if (OutSel.Count > 0)
+        {
+            var expired = new List<OutSelData>();
+            foreach (var sel in OutSel.Values)
+            {
+                if (sel.IsExpired)
+                {
+                    expired.Add(sel);
+                }
+                else
+                {
+                    long f = sel.Frame - Timer;
+                    int sec = (int)((f + 59) / 60); // 向上取整
+
+                    // 仅当剩余秒数在 1~5 之间且与上次发送的不同时，发送提醒
+                    if (sec >= 1 && sec <= 5 && sec != sel.LastRemainSec)
+                    {
+                        sel.LastRemainSec = sec;
+                        TSPlayer? plr = TShock.Players.FirstOrDefault(p => p != null && p.Name == sel.PlayerName);
+                        if (plr != null)
+                            plr.SendMessage(TextGradient($"记录将在 [c/FF7566:{sec}] 秒后执行"), color);
+                    }
+                }
+            }
+
+            foreach (var sel in expired)
+            {
+                MyCommand.OutPendTimeOut(sel);
+            }
         }
     }
     #endregion
@@ -466,7 +498,8 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     #endregion
 
     #region 箱子打开事件（创建、查看数据）
-    public static Dictionary<string, HashSet<int>> outPend = new(); // 玩家名 -> 待处理的传输箱索引集合
+    // 玩家名 -> 传输箱选择会话
+    public static Dictionary<string, OutSelData> OutSel = new();
     private void OnChestOpen(object sender, GetDataHandlers.ChestOpenEventArgs e)
     {
         if (!Config.Enabled) return;
@@ -508,11 +541,11 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         }
 
         // 批量传输箱记录模式
-        if (outPend.TryGetValue(plr.Name, out var outSet))
+        if (OutSel.TryGetValue(plr.Name, out var sel))
         {
-            if (c != -1 && !outSet.Contains(c))
+            if (c != -1 && !sel.LogChests.Contains(c))
             {
-                outSet.Add(c);
+                sel.AddChest(c);
                 plr.SendMessage(TextGradient($"已记录传输箱: [c/FF6857:{c}]"), color);
             }
             return; // 记录模式下不执行后续钓鱼机相关逻辑
@@ -712,14 +745,11 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         if (plr.ContainsData("info")) plr.RemoveData("info");
         if (plr.ContainsData("sync")) plr.RemoveData("sync");
 
-        if (plr.ContainsData("out"))
-            plr.RemoveData("out");
-
         if (pend.ContainsKey(plr.Name))
             pend.Remove(plr.Name);
 
-        if (outPend.ContainsKey(plr.Name))
-            outPend.Remove(plr.Name);
+        if (OutSel.ContainsKey(plr.Name))
+            OutSel.Remove(plr.Name);
 
         var data = FindRegion(plr.CurrentRegion.Name);
         if (data == null || plr.CurrentRegion.Name != data.RegName) return;
