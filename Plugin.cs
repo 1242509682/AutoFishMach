@@ -20,7 +20,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     public static string PluginName => "自动钓鱼机";
     public override string Name => PluginName;
     public override string Author => "羽学";
-    public override Version Version => new(1, 1, 8);
+    public override Version Version => new(1, 1, 9);
     public override string Description => "使用/afm 指令指定一个箱子作为自动钓鱼机";
     #endregion
 
@@ -186,10 +186,11 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     }
     #endregion
 
-    #region 游戏更新事件（主要触发器）
+    #region 游戏更新事件（主要处理:非电路模式钓鱼,动画执行队列,物品传输队列,传输箱选择）
     public static long Timer = 0; // 帧计数器（每次游戏更新+1）
     public static readonly HashSet<MachData> ActiveAnim = new(); // 存储当前有待处理动画的机器
     public static readonly Queue<MachData> PutQueue = new();  // 存储当前有待处理物品传输的机器
+    public static Dictionary<string, OutSelData> OutSel = new(); // 玩家名 -> 传输箱选择会话
     private void OnGameUpdate(EventArgs args)
     {
         if (!Config.Enabled) return;
@@ -242,7 +243,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             data.ClearAnim(); // 清空队列
         }
 
-        // 处理转移队列（每帧最多处理 5 台，避免卡顿）
+        // 处理物品转移队列（每帧最多处理 5 台，避免卡顿）
         int count = 0;
         while (PutQueue.Count > 0 && count < Config.TransferStack)
         {
@@ -254,35 +255,61 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             count++;
         }
 
-        // 处理传输箱批量记录模式（倒计时 + 超时）
+        // 处理传输箱批量修改（倒计时 + 超时）
         if (OutSel.Count > 0)
         {
-            var expired = new List<OutSelData>();
-            foreach (var sel in OutSel.Values)
+            foreach (var outSel in OutSel.ToList())
             {
-                if (sel.IsExpired)
-                {
-                    expired.Add(sel);
-                }
-                else
+                var sel = outSel.Value;
+
+                TSPlayer? plr = TShock.Players.FirstOrDefault(p => p != null && p.Name == outSel.Key);
+
+                if (!sel.IsExpired)
                 {
                     long f = sel.Frame - Timer;
                     int sec = (int)((f + 59) / 60); // 向上取整
 
                     // 仅当剩余秒数在 1~5 之间且与上次发送的不同时，发送提醒
-                    if (sec >= 1 && sec <= 5 && sec != sel.LastRemainSec)
+                    if (sec >= 1 && sec <= 5 &&
+                        sec != sel.LastRemainSec)
                     {
                         sel.LastRemainSec = sec;
-                        TSPlayer? plr = TShock.Players.FirstOrDefault(p => p != null && p.Name == sel.PlayerName);
-                        if (plr != null)
-                            plr.SendMessage(TextGradient($"记录将在 [c/FF7566:{sec}] 秒后执行"), color);
+                        plr?.SendMessage(TextGradient($"离传输箱修改还剩 [c/FF7566:{sec}] 秒"), color);
                     }
                 }
-            }
+                else
+                {
+                    OutSel.Remove(outSel.Key);
 
-            foreach (var sel in expired)
-            {
-                MyCommand.OutPendTimeOut(sel);
+                    var data = FindRegion(sel.RegionName);
+                    if (data == null || sel.LogChests.Count == 0) continue;
+
+                    int added = 0, removed = 0, skipped = 0;
+
+                    foreach (int idx in sel.LogChests.ToList())
+                    {
+                        if (data.OutChests.Contains(idx))
+                        {
+                            DataManager.RemoveOutChest(data, idx);
+                            removed++;
+                        }
+                        else
+                        {
+                            // 合法性检查
+                            if (idx == data.ChestIndex) { skipped++; continue; }
+                            if (FindChest(idx) != null) { skipped++; continue; }
+                            if (Config.MaxOutChest > 0 &&
+                                data.OutChests.Count >= Config.MaxOutChest) { skipped++; continue; }
+                            DataManager.AddOutChest(data, idx);
+                            added++;
+                        }
+                    }
+
+                    string msg = $"传输箱：添加 {added} 个,移除 {removed} 个";
+                    if (skipped > 0) msg += $",跳过 {skipped} 个";
+                    msg += "\n渔获:从鱼池飞到传输箱 钓出怪物:鱼池原位生成";
+                    plr?.SendMessage(TextGradient(msg), color);
+                }
             }
         }
     }
@@ -498,8 +525,6 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     #endregion
 
     #region 箱子打开事件（创建、查看数据）
-    // 玩家名 -> 传输箱选择会话
-    public static Dictionary<string, OutSelData> OutSel = new();
     private void OnChestOpen(object sender, GetDataHandlers.ChestOpenEventArgs e)
     {
         if (!Config.Enabled) return;
@@ -808,9 +833,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     #region 怪物生成与死亡事件 (更新npc缓存,检测钓出单独怪物)
     private void OnNpcSpawn(NpcSpawnEventArgs args)
     {
-        if (!Config.Enabled ||
-            !Config.EnableCustomNPC ||
-            !Config.SoloCustomMonster) return;
+        if (!Config.Enabled || !Config.EnableCustomNPC) return;
 
         var npc = Main.npc[args.NpcId];
         if (npc == null || !npc.active || npc.townNPC ||
@@ -824,9 +847,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
 
     private void OnNPCKilled(NpcKilledEventArgs args)
     {
-        if (!Config.Enabled ||
-            !Config.EnableCustomNPC ||
-            !Config.SoloCustomMonster) return;
+        if (!Config.Enabled || !Config.EnableCustomNPC) return;
 
         var npc = args.npc;
         if (npc == null || !npc.active || npc.townNPC ||
@@ -843,32 +864,31 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     private static void UpdateNpcCache(NPC npc, bool add)
     {
         // 只处理自定义怪物
-        bool isCustom = Config.CustomFishes.Any(r => r.NPCType == npc.type);
-        if (!isCustom) return;
+        if (!Config.CustomFishes.Any(r => r.NPCType == npc.type)) return;
 
-        // 获取 NPC 所在的钓鱼机区域
+        // 优先通过位置查找区域
         int tileX = (int)(npc.position.X / 16);
         int tileY = (int)(npc.position.Y / 16);
-        var region = TShock.Regions.InAreaRegion(tileX, tileY).
-                     FirstOrDefault(r => IsAfmRegion(r.Name));
+        var region = TShock.Regions.InAreaRegion(tileX, tileY)
+                     .FirstOrDefault(r => IsAfmRegion(r.Name));
+        var data = region != null ? FindRegion(region.Name) : null;
 
-        if (region == null) return;
+        // 死亡事件且位置未命中时，回退遍历所有机器
+        if (!add && data == null)
+            data = Machines.FirstOrDefault(d => d.Monsters.ContainsKey(npc.type));
 
-        var data = FindRegion(region.Name);
         if (data == null) return;
 
+        // 统一更新计数
+        int curr = data.Monsters.GetValueOrDefault(npc.type);
         if (add)
+            data.Monsters[npc.type] = curr + 1;
+        else if (curr > 0)
         {
-            data.Monsters.TryGetValue(npc.type, out int cnt);
-            data.Monsters[npc.type] = cnt + 1;
-        }
-        else
-        {
-            if (data.Monsters.TryGetValue(npc.type, out int cnt) && cnt > 0)
-            {
-                if (cnt == 1) data.Monsters.Remove(npc.type);
-                else data.Monsters[npc.type] = cnt - 1;
-            }
+            if (curr == 1)
+                data.Monsters.Remove(npc.type);
+            else
+                data.Monsters[npc.type] = curr - 1;
         }
     }
     #endregion

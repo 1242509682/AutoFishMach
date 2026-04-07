@@ -681,16 +681,15 @@ public class AutoFishing
     #region 禁钓怪物模式
     private bool IsMonsterSolo(Vector2 spawnPos, int npcType)
     {
-        if (!Config.SoloCustomMonster) return false;
+        if (!data.SoloCustomMonster) return false;
 
-        var data = this.data;
-        if (Config.SoloMode == 0)
+        if (data.SoloMode == 0)
         {
             // 模式0：不同类各一个，检查是否有任何自定义怪物存在
             if (data.Monsters.TryGetValue(npcType, out int cnt) && cnt > 0)
                 return true;
         }
-        else if (Config.SoloMode == 1)
+        else if (data.SoloMode == 1)
         {
             // 模式1：仅单挑，检查所有怪物数量
             if (data.Monsters.Count > 0)
@@ -806,7 +805,7 @@ public class AutoFishing
                     plr.SendData(PacketTypes.UpdateItemDrop, null, idx);
         }
 
-        // 触发批量转移（保持不变）
+        // 触发批量转移
         var TransferInterval = Config.TransferInterval > 0 ? Config.TransferInterval : 5;
         if (data.HasOut && !data.NeedPut && Plugin.Timer - data.LastPutFrame > TransferInterval * 60)
         {

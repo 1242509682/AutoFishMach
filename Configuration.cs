@@ -10,14 +10,18 @@ namespace FishMach;
 internal class Configuration
 {
     #region 配置项成员
-    [JsonProperty("自定渔获进度参考", Order = -20)]
+    [JsonProperty("自定渔获进度参考", Order = -21)]
     public List<string> Reference = new();
-    [JsonProperty("使用方法", Order = -19)]
+    [JsonProperty("使用方法", Order = -20)]
     public List<string> Text { get; set; } = new();
-    [JsonProperty("插件开关", Order = -18)]
+
+    [JsonProperty("插件开关", Order = -19)]
     public bool Enabled { get; set; } = true;
-    [JsonProperty("钓鱼机上限", Order = -17)]
+    [JsonProperty("钓鱼机上限", Order = -18)]
     public int MaxMachines { get; set; } = 0; // 0表示无限制
+
+    [JsonProperty("传送指令", Order = -17)]
+    public bool Teleport { get; set; } = true;
 
     [JsonProperty("传输模式", Order = -16)]
     public bool TransferMode { get; set; } = true;
@@ -34,8 +38,10 @@ internal class Configuration
     [JsonProperty("传输箱选择计时", Order = -10)]
     public int OutSelTimer { get; set; } = 30;
 
-    [JsonProperty("钓任务鱼", Order = -6)]
+    [JsonProperty("钓任务鱼", Order = -7)]
     public bool QuestFish { get; set; } = true;
+    [JsonProperty("可钓怪物", Order = -6)]
+    public bool EnableCustomNPC { get; set; } = true;
     [JsonProperty("假鱼动画", Order = -5)]
     public bool FakeFish { get; set; } = true;
     [JsonProperty("物品动画", Order = -4)]
@@ -55,8 +61,8 @@ internal class Configuration
     [JsonProperty("需要电路", Order = 4)]
     public bool NeedWiring { get; set; } = false;
     [JsonProperty("钓鱼间隔", Order = 6)]
-    public string FishInterval { get; set; } = "60,240";
-    [JsonProperty("环境范围", Order = 7)]
+    public string FishInterval { get; set; } = "90,240";
+    [JsonProperty("环境检测范围", Order = 7)]
     public int ZoneRange { get; set; } = 10;
     [JsonProperty("区域BUFF", Order = 8)]
     public bool RegionBuffEnabled { get; set; } = true;
@@ -66,19 +72,13 @@ internal class Configuration
     public int FishingPotionPower { get; set; } = 20;
     [JsonProperty("鱼饵桶加成", Order = 11)]
     public int ChumBucketPower { get; set; } = 10;
-    [JsonProperty("允许钓出怪物", Order = 12)]
-    public bool EnableCustomNPC { get; set; } = true;
-    [JsonProperty("禁钓已有怪物", Order = 13)]
-    public bool SoloCustomMonster { get; set; } = true;
-    [JsonProperty("禁钓模式(0不同类/1仅单挑)", Order = 14)]
-    public int SoloMode { get; set; } = 0;
-    [JsonProperty("永久渔力加成物品", Order = 15)]
+    [JsonProperty("永久渔力加成物品", Order = 13)]
     public Dictionary<int, int> CustomPowerItems { get; set; } = new();
-    [JsonProperty("区域Buff消耗物品", Order = 16)]
+    [JsonProperty("区域Buff消耗物品", Order = 14)]
     public List<CustomUsedItems> CustomUsedItem { get; set; } = new();
-    [JsonProperty("自定义渔获表", Order = 17)]
+    [JsonProperty("自定义渔获表", Order = 15)]
     public List<CustomFishRule> CustomFishes { get; set; } = new();
-    [JsonProperty("液体弹幕检测", Order = 18)] 
+    [JsonProperty("液体弹幕检测", Order = 16)] 
     public List<int> LiqProj { get; set; } = [];
 
     [JsonIgnore] public int TransferFrames => TransferInterval * 60;
@@ -106,11 +106,12 @@ internal class Configuration
         Text = new List<string>()
         {
              "1.给玩家权限;/group addperm default afm.use",
-             "2.打开个箱子,使用/afm s指令",
-             "3.给箱子放入鱼竿和鱼饵",
-             "4.如果开启【需要电路】,则需要连上电线与计时器",
+             "2.给箱子放入鱼竿和鱼饵,使用/afm s指令",
+             "3.如果开启【需要电路】,则需要连上电线与计时器",
+             "[可选] 在钓鱼机附近使用/afm o 离开区域打开其他箱子作为传输箱",
+             "[传输箱] 支持跨区域转移物品 (允许单机多箱 与 多机共用1箱)",
              "重置服务器时使用:/afm reset",
-             "挖掉箱子自动销毁钓鱼机",
+             "挖掉箱子自动销毁钓鱼机与传输箱",
         };
 
         CustomPowerItems = new()
@@ -132,11 +133,11 @@ internal class Configuration
 
         CustomFishes = new()
         {
-            // 克眼后 1/30 概率钓到生命水晶
+            // 克眼后 1% 概率钓到生命水晶
             new CustomFishRule()
             {
                 ItemType = ItemID.LifeCrystal,
-                Chance = 30,
+                Chance = 100,
                 Cond = new List<string>() { "克眼" }
             },
 

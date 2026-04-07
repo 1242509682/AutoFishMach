@@ -52,6 +52,10 @@ public class MachData
     public int ChestIndex { get; set; } = -1;
     [JsonProperty("输出列表")]
     public List<int> OutChests { get; set; } = new();
+    [JsonProperty("禁钓已有怪物")]
+    public bool SoloCustomMonster { get; set; } = true;
+    [JsonProperty("禁钓模式")]
+    public int SoloMode { get; set; } = 0;
     [JsonProperty("神圣")]
     public bool ZoneHallow { get; set; }
     [JsonProperty("腐化")]

@@ -5,9 +5,6 @@
 /// </summary>
 public class OutSelData
 {
-    /// <summary>玩家名</summary>
-    public string PlayerName { get; set; }
-
     /// <summary>目标钓鱼机区域名</summary>
     public string RegionName { get; set; }
 
@@ -27,9 +24,8 @@ public class OutSelData
     /// <param name="plrName">玩家名</param>
     /// <param name="regName">钓鱼机区域名</param>
     /// <param name="Seconds">持续秒数</param>
-    public OutSelData(string plrName, string regName, int Seconds)
+    public OutSelData(string regName, int Seconds)
     {
-        PlayerName = plrName;
         RegionName = regName;
         Frame = Plugin.Timer + Seconds * 60; // 60帧/秒
     }
