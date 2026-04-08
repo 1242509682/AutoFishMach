@@ -33,23 +33,20 @@ public class AutoFishing
     #region 钓鱼核心逻辑
     public void Execute()
     {
-        // 无人自动关闭检查
-        if (Config.AutoStopWhenEmpty && data.RegionPlayers.Count == 0)
+        // 快速跳过：无人/永久缺鱼竿鱼饵/液体已死
+        if ((Config.WhenEmpty && data.RegionPlayers.Count == 0) ||
+            data.RodSlot == -2 || data.BaitSlot == -2 || data.LiqDead)
             return;
 
-        // 如果液体已死，不再检查液体，直接返回
-        if (data.LiqDead)
-            return;
-
-        // 1. 液体实时更新(内部自带快速检查)
+        // 1. 液体检测（仅液体未死时执行，内部有快速检查避免全量遍历)
         EnvManager.SyncLiquid(data);
 
         // 2. 液体更新后仍不满足液体条件，直接返回，并标记液体已死
         if (data.MaxLiq == 0 || data.MaxLiq < Config.NeedLiqStack)
         {
-            if (!data.LiquidBroadcast)
+            if (!data.LiquidText)
             {
-                data.LiquidBroadcast = true;
+                data.LiquidText = true;
                 data.LiqDead = true; // 标记液体已死，停止后续检测
                 var text = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 鱼池[c/FF716D:液体异常]\n";
                 TSPlayer.All.SendMessage(TextGradient(text), color);
@@ -59,39 +56,50 @@ public class AutoFishing
             }
             return;
         }
-        data.LiquidBroadcast = false;
+        data.LiquidText = false;
         data.LiqDead = false; // 液体充足时清除死亡标记
+
+        // 岩浆特殊处理
+        if (data.LiqType == LiquidID.Lava && !data.CanFishInLava)
+        {
+            if (!data.LavaText)
+            {
+                data.LavaText = true;
+                TSPlayer.All.SendMessage(TextGradient($"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 鱼池为岩浆，缺少岩浆用品\n"), color);
+                data.ClearAnim();  // 清空动画队列，避免播放过时动画
+            }
+            return;
+        }
+        data.LavaText = false;
 
         // 3. 鱼竿
         if (!FindRod(out Item rodItem, out int rodSlot))
         {
             // 仅在未播报过时播报一次
-            if (!data.RodBroadcast)
+            if (!data.RodText)
             {
-                data.RodBroadcast = true;
+                data.RodText = true;
                 var text = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 未找到[c/FF716D:鱼竿]\n";
                 TSPlayer.All.SendMessage(TextGradient(text), color);
-                // 清空动画队列，避免播放过时动画
-                data.ClearAnim();
+                data.ClearAnim();  // 清空动画队列，避免播放过时动画
             }
             return;
         }
-        data.RodBroadcast = false;
+        data.RodText = false;
 
         // 4. 鱼饵
         if (!FindBait(out Item baitItem, out int baitSlot))
         {
-            if (!data.BaitBroadcast)
+            if (!data.BaitText)
             {
-                data.BaitBroadcast = true;
+                data.BaitText = true;
                 var text = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 未找到[c/FF716D:鱼饵]\n";
                 TSPlayer.All.SendMessage(TextGradient(text), color);
-                // 清空动画队列，避免播放过时动画
-                data.ClearAnim();
+                data.ClearAnim();  // 清空动画队列，避免播放过时动画
             }
             return;
         }
-        data.BaitBroadcast = false;
+        data.BaitText = false;
 
         // 5. 使用消耗物品并返回额外临时鱼力
         int UsedBonus = UsedItem();
@@ -122,12 +130,10 @@ public class AutoFishing
         // 9. 原版渔获
         var context = BuildFishingContext(power, rodItem, baitItem);
         int itemType = RuleList.TryGetItemDropType(context);
-        if (itemType == 0) return;
+        if (itemType == 0 || data.Exclude.Contains(itemType)) return;
 
         Item fish = ContentSamples.ItemsByType[itemType].Clone();
         fish.stack = 1;
-
-        if (data.Exclude.Contains(fish.type)) return;
 
         // 10. 放入箱子
         FishPutToAnim(fish);
@@ -391,11 +397,11 @@ public class AutoFishing
     #region 自定义渔获
     private void CustomFishes(Item rodItem, ref bool allow)
     {
-        EnvManager.SetupTempPlayer(data, true);
+        var plr = EnvManager.SetPlayer(data, true);
 
         foreach (var rule in Config.CustomFishes)
         {
-            if (rule.Cond.Count > 0 && !CheckConds(rule.Cond, TempPlayer))
+            if (rule.Cond.Count > 0 && !CheckConds(rule.Cond, plr))
                 continue;
 
             int chance = rule.Chance;
@@ -407,9 +413,17 @@ public class AutoFishing
 
             if (rule.NPCType > 0)
             {
-                if (!Config.EnableCustomNPC) continue;
+                if (!data.CustomNPC || data.RegionPlayers.Count == 0) continue;
 
-                if (data.RegionPlayers.Count == 0) continue;
+                if (Config.RegionSafe && Config.AutoOffSafe && data.SafeMode)
+                {
+                    data.SafeMode = false;
+                    DataManager.Save(data);
+                    foreach (var tsplr in data.RegionPlayers)
+                        tsplr.SendMessage(TextGradient($"怪物防护已自动[c/FF716D:关闭]"), color2);
+
+                    continue;
+                }
 
                 bool inLava = data.LavaCount >= data.MaxLiq, inHoney = data.HoneyCount >= data.MaxLiq;
                 if (inLava || inHoney) continue;
@@ -427,9 +441,10 @@ public class AutoFishing
                     NetMessage.SendData((int)PacketTypes.NpcUpdate, -1, -1, null, npcIndex);
 
                     if (data.RegionPlayers.Count > 0)
-                        foreach (var plr in data.RegionPlayers)
-                            plr.SendMessage(TextGradient($"钓到了:" +
-                                                         $"{Lang.GetNPCNameValue(rule.NPCType)}"), color2);
+                        foreach (var tsplr in data.RegionPlayers)
+                            tsplr.SendMessage(TextGradient($"钓到了:" +
+                                                          $"{Lang.GetNPCNameValue(rule.NPCType)}"), color2);
+
                     data.Monsters[rule.NPCType] = data.Monsters.GetValueOrDefault(rule.NPCType) + 1;
                 }
                 allow = true;
@@ -450,19 +465,19 @@ public class AutoFishing
     #region 构建钓鱼信息上下文
     private FishingContext BuildFishingContext(int fishingPower, Item rodItem, Item baitItem)
     {
-        EnvManager.SetupTempPlayer(data);
+        var plr = EnvManager.SetPlayer(data);
 
         int heightLevel = data.HeightLevel;
         if (Main.remixWorld && heightLevel == 2 && Main.rand.Next(2) == 0)
             heightLevel = 1;
 
-        bool corruption = TempPlayer.ZoneCorrupt;
-        bool crimson = TempPlayer.ZoneCrimson;
-        bool jungle = TempPlayer.ZoneJungle;
-        bool snow = TempPlayer.ZoneSnow;
-        bool hallow = TempPlayer.ZoneHallow;
-        bool desert = TempPlayer.ZoneDesert;
-        bool beach = TempPlayer.ZoneBeach;
+        bool corruption = plr.ZoneCorrupt;
+        bool crimson = plr.ZoneCrimson;
+        bool jungle = plr.ZoneJungle;
+        bool snow = plr.ZoneSnow;
+        bool hallow = plr.ZoneHallow;
+        bool desert = plr.ZoneDesert;
+        bool beach = plr.ZoneBeach;
         bool rolledRemixOcean = data.RolledRemixOcean;
 
         if (corruption && crimson)
@@ -488,7 +503,7 @@ public class AutoFishing
         if (waterQuality < 1f)
             fishingPower = (int)(fishingPower * waterQuality);
 
-        float luck = TempPlayer.luck;
+        float luck = plr.luck;
         if (luck < 0f && Main.rand.NextFloat() < -luck)
         {
             double factor = 0.9 - Main.rand.NextDouble() * 0.3; // 0.6 ~ 0.9
@@ -506,7 +521,7 @@ public class AutoFishing
         FishingCheck_RollDropLevels(fishingPower, hasCratePotion, out common, out uncommon, out rare, out veryrare, out legendary, out crate);
 
         int questFish = -1;
-        if (Config.QuestFish && NPC.AnyNPCs(NPCID.Angler) && !Main.anglerQuestFinished)
+        if (data.QuestFish && NPC.AnyNPCs(NPCID.Angler) && !Main.anglerQuestFinished)
             questFish = Main.anglerQuestItemNetIDs[Main.anglerQuest];
 
         bool canFishInLava = data.CanFishInLava ||
@@ -517,7 +532,7 @@ public class AutoFishing
         {
             Random = Main.rand,
             Fisher = new FishingAttempt(),
-            Player = TempPlayer,
+            Player = plr,
             RolledCorruption = corruption,
             RolledCrimson = crimson,
             RolledJungle = jungle,
@@ -681,17 +696,18 @@ public class AutoFishing
     #region 禁钓怪物模式
     private bool IsMonsterSolo(Vector2 spawnPos, int npcType)
     {
-        if (!data.SoloCustomMonster) return false;
+        if (!data.CustomNPC ||
+            !data.SoloMonster) return false;
 
-        if (data.SoloMode == 0)
+        if (!data.SoloMode)
         {
-            // 模式0：不同类各一个，检查是否有任何自定义怪物存在
+            // 不同类各一个，检查是否有任何自定义怪物存在
             if (data.Monsters.TryGetValue(npcType, out int cnt) && cnt > 0)
                 return true;
         }
-        else if (data.SoloMode == 1)
+        else
         {
-            // 模式1：仅单挑，检查所有怪物数量
+            // 仅单挑，检查所有怪物数量
             if (data.Monsters.Count > 0)
                 return true;
         }
@@ -702,7 +718,10 @@ public class AutoFishing
     #region 非转移物品判断
     public static bool SafeItem(Item item, MachData data)
     {
-        if (item == null || item.IsAir) return false;
+        // 空物品，安全跳过
+        if (item == null || item.IsAir) return true;
+        // 如果是排除表内物品,则不转移
+        if (data.Exclude.Contains(item.type)) return true;
         if (data.SafeTypes.Contains(item.type)) return true;
         // 如果配置禁止转移钱币，则钱币视为安全物品（留在主箱）
         if (!Config.TransferCoins && item.IsACoin) return true;

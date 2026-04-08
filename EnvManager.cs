@@ -344,7 +344,7 @@ public static class EnvManager
             // 距离不足时设置同步标记，等待箱子打开
             if (error.Contains("距离"))
             {
-                plr.SetData("sync", true);
+                AfmPlrMag.GetPlyData(plr.Name).SyncFlag = true;
                 plr.SendMessage(TextGradient("\n请打开要同步数据的钓鱼机箱子..."), color);
             }
             else
@@ -431,11 +431,11 @@ public static class EnvManager
     #endregion
 
     #region 将缓存环境赋值给假玩家
-    public static void SetupTempPlayer(MachData data, bool Custom = false)
+    public static Player SetPlayer(MachData data, bool Custom = false)
     {
-        var plr = TempPlayer;
+        var plr = new Player();
         plr.position = new Vector2(data.Pos.X * 16, data.Pos.Y * 16);
-        plr.UpdateBiomes();
+        // plr.UpdateBiomes();
         plr.ZoneHallow = data.ZoneHallow; // 神圣
         plr.ZoneCorrupt = data.ZoneCorrupt; //腐化
         plr.ZoneCrimson = data.ZoneCrimson; // 猩红
@@ -478,6 +478,8 @@ public static class EnvManager
             plr.ZoneTowerVortex = data.ZoneTowerVortex; // 星漩天塔柱 
             plr.ZoneUndergroundDesert = data.ZoneUndergroundDesert; // 地下沙漠 
         }
+
+        return plr;
     }
     #endregion
 

@@ -358,6 +358,7 @@ internal class DataManager
         OutChestMap.Clear();
         FishSched.Clear();
         RegionChests.Clear();
+        AfmPlrMag.PlyDatas.Clear(); // 清理玩家数据
 
         if (Directory.Exists(CacheDir))
             Directory.Delete(CacheDir, true);

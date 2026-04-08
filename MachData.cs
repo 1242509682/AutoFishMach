@@ -52,10 +52,24 @@ public class MachData
     public int ChestIndex { get; set; } = -1;
     [JsonProperty("输出列表")]
     public List<int> OutChests { get; set; } = new();
+    [JsonProperty("钓任务鱼")]
+    public bool QuestFish { get; set; } = true;
+    [JsonProperty("允许钓怪")]
+    public bool CustomNPC { get; set; } = true;
     [JsonProperty("禁钓已有怪物")]
-    public bool SoloCustomMonster { get; set; } = true;
+    public bool SoloMonster { get; set; } = true;
     [JsonProperty("禁钓模式")]
-    public int SoloMode { get; set; } = 0;
+    public bool SoloMode { get; set; } = false; // true只钓一个 / false不同类各一个 
+    [JsonProperty("怪物防护")]
+    public bool SafeMode { get; set; } = false;
+    [JsonProperty("防护模式")]
+    public bool RepelMode { get; set; } = true; // true=排斥，false=清除
+    [JsonProperty("击退力度")]
+    public float RepelPower { get; set; } = 5f;
+    [JsonProperty("影响友军")]
+    public bool Friendly { get; set; } = false; // 是否影响友好NPC
+    [JsonProperty("影响雕像")]
+    public bool Statue { get; set; } = false; // 是否影响雕像生成的NPC
     [JsonProperty("神圣")]
     public bool ZoneHallow { get; set; }
     [JsonProperty("腐化")]
@@ -147,19 +161,22 @@ public class MachData
 
     // 液体播报标识
     [JsonIgnore]
-    public bool LiquidBroadcast = false;
+    public bool LiquidText = false;
+    // 熔岩钓鱼播报标识
+    [JsonIgnore]
+    public bool LavaText = false;
 
     // 鱼竿槽位与播报标识
     [JsonIgnore]
     public int RodSlot { get; set; } = -1;
     [JsonIgnore]
-    public bool RodBroadcast = false;
+    public bool RodText = false;
 
     // 鱼饵槽位与播报标识
     [JsonIgnore]
     public int BaitSlot { get; set; } = -1;
     [JsonIgnore]
-    public bool BaitBroadcast = false;
+    public bool BaitText = false;
 
     // 宝匣药水槽位
     [JsonIgnore]

@@ -36,12 +36,8 @@ internal class Configuration
     [JsonProperty("传输消息", Order = -11)]
     public bool ShowTransferMsg { get; set; } = false;
     [JsonProperty("传输箱选择计时", Order = -10)]
-    public int OutSelTimer { get; set; } = 30;
+    public int SelTimer { get; set; } = 30;
 
-    [JsonProperty("钓任务鱼", Order = -7)]
-    public bool QuestFish { get; set; } = true;
-    [JsonProperty("可钓怪物", Order = -6)]
-    public bool EnableCustomNPC { get; set; } = true;
     [JsonProperty("假鱼动画", Order = -5)]
     public bool FakeFish { get; set; } = true;
     [JsonProperty("物品动画", Order = -4)]
@@ -50,18 +46,24 @@ internal class Configuration
     public bool Sparkle { get; set; } = true;
     [JsonProperty("区域保护", Order = -2)]
     public bool RegionBuild { get; set; } = false;
+    [JsonProperty("怪物防护", Order = -1)]
+    public bool RegionSafe { get; set; } = true;
+    [JsonProperty("钓怪关防", Order = -1)]
+    public bool AutoOffSafe { get; set; } = true;
+    [JsonProperty("防护间隔")]
+    public int RepelFrames { get; set; } = 60;
     [JsonProperty("区域广播", Order = 0)]
-    public bool RegionBroadcast { get; set; } = true;
+    public bool RegionBroadcast { get; set; } = false;
     [JsonProperty("区域范围", Order = 1)]
     public int Range { get; set; } = 62;
     [JsonProperty("无人关闭", Order = 2)]
-    public bool AutoStopWhenEmpty { get; set; } = false;
+    public bool WhenEmpty { get; set; } = false;
     [JsonProperty("需要水量", Order = 3)]
     public int NeedLiqStack { get; set; } = 75;
     [JsonProperty("需要电路", Order = 4)]
     public bool NeedWiring { get; set; } = false;
     [JsonProperty("钓鱼间隔", Order = 6)]
-    public string FishInterval { get; set; } = "90,240";
+    public string FishInterval { get; set; } = "120,240";
     [JsonProperty("环境检测范围", Order = 7)]
     public int ZoneRange { get; set; } = 10;
     [JsonProperty("区域BUFF", Order = 8)]
@@ -133,11 +135,11 @@ internal class Configuration
 
         CustomFishes = new()
         {
-            // 克眼后 1% 概率钓到生命水晶
+            // 克眼后 0.5% 概率钓到生命水晶
             new CustomFishRule()
             {
                 ItemType = ItemID.LifeCrystal,
-                Chance = 100,
+                Chance = 200,
                 Cond = new List<string>() { "克眼" }
             },
 
