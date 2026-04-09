@@ -66,67 +66,10 @@ internal class MyCommand
                     var all = Machines;
                     if (all.Count == 0)
                     {
-                        if (plr.RealPlayer) plr.SendMessage(TextGradient("没有自动钓鱼机"), color);
-                        else plr.SendMessage($"没有自动钓鱼机", color);
+                        plr.SendMessage(TextGradient("没有自动钓鱼机"), color);
                         return;
                     }
-
-                    int page = 1;
-                    if (args.Parameters.Count > 1 && !int.TryParse(args.Parameters[1], out page)) page = 1;
-
-                    // 每页显示的数量（可调整此数值）
-                    int max = 4; // 每页最多显示4个自动钓鱼机
-
-                    // 计算当前页的起始和结束索引
-                    int start = (page - 1) * max; // 当前页第一个项目的索引
-                    int end = (int)MathF.Min(start + max, all.Count); // 当前页最后一个项目的索引
-
-                    // 计算总页数（根据实际项目数量计算）
-                    int total = (int)MathF.Ceiling((float)((double)all.Count / max)); // 总页数
-
-                    // 验证页码是否超出范围
-                    if (page > total)
-                    {
-                        plr.SendErrorMessage($"页码超出范围，总共有 {total} 页");
-                        return;
-                    }
-
-                    // 创建包含所有行的StringBuilder
-                    var sb = new StringBuilder();
-                    sb.AppendLine($"自动钓鱼机列表 ({page}/{total})"); // 显示当前页/总页数
-
-                    // 遍历当前页的所有项目
-                    for (int i = start; i < end; i++)
-                    {
-                        var data = all[i];
-                        int idx = i - start + 1; // 在当前页中的显示序号（从1开始）
-
-                        var env = new List<string>();
-                        var env2 = MyCommand.GetHeightName(data.HeightLevel);
-                        if (data.ZoneHallow) env.Add("神圣");
-                        if (data.ZoneCorrupt) env.Add("腐化");
-                        if (data.ZoneCrimson) env.Add("猩红");
-                        if (data.ZoneJungle) env.Add("丛林");
-                        if (data.ZoneSnow) env.Add("雪原");
-                        if (data.ZoneDesert) env.Add("沙漠");
-                        if (data.ZoneBeach) env.Add("海洋");
-                        if (data.ZoneDungeon) env.Add("地牢");
-                        if (data.RolledRemixOcean) env.Add("颠倒海洋");
-
-                        var (rodInfo, baitInfo) = GetRodBaitInfo(data);
-
-                        string line = $"{idx}.{data.Owner}的钓鱼机 [c/ED756F:{data.ChestIndex}] " +
-                                     $"{rodInfo} {baitInfo}\n" +
-                                     $"环境 {env2},{string.Join(",", env)}";
-
-                        sb.AppendLine(line);
-                    }
-
-                    // 根据实际页数显示下一页提示
-                    if (page < total)
-                        sb.AppendLine($"输入 /{afm} list {page + 1} 查看第 {page + 1} 页");
-
-                    plr.SendMessage(TextGradient(sb.ToString()), color);
+                    ListMach(plr, all);
                 }
                 break;
 
@@ -279,6 +222,7 @@ internal class MyCommand
             mess.AppendLine($"/{afm} ls - 列出所有钓鱼机");
             mess.AppendLine($"/{afm} lt - 查看自定渔获");
             mess.AppendLine($"/{afm} ex - 修改排除物品表");
+
             if (IsAdmin(plr))
             {
                 mess.AppendLine($"/{afm} cd - 查看自定渔获条件");
@@ -286,15 +230,11 @@ internal class MyCommand
                 mess.AppendLine($"/{afm} npc - 修改自定渔获怪物");
                 mess.AppendLine($"/{afm} rs - 重置插件数据");
             }
+
             plr.SendMessage(TextGradient(mess.ToString()), color);
-            if (plr.CurrentRegion != null && IsAfmRegion(plr.CurrentRegion.Name))
-            {
-                var data = FindRegion(plr.CurrentRegion.Name);
-                if (data != null)
-                {
-                    FixTip(data, plr);
-                }
-            }
+
+            // 手游专供提示
+            PeText(plr);
         }
     }
     #endregion
@@ -327,7 +267,6 @@ internal class MyCommand
         var (rodInfo, baitInfo) = GetRodBaitInfo(data);
         string envStr = GetEnvString(data);
         string customBuff = GetCustomBuffString(data, true);
-        string excludeStr = GetExcludeString(data);
 
         // 水体质量需求
         int waterNeeded = (int)(300f * data.atmo);
@@ -336,7 +275,7 @@ internal class MyCommand
         float waterQuality = MathF.Min(1f, (float)effectiveWater / waterNeeded);
         // 消息构建
         var mess = new StringBuilder();
-        mess.AppendLine($"\n[c/E8EB6E:{data.Owner}] 钓鱼机 [c/ED756F:{data.ChestIndex}] [c/75D1FF:{data.RegionPlayers.Count}] 人");
+        mess.AppendLine($"\n[c/E8EB6E:{data.Owner}] 钓鱼机 [c/ED756F:{data.ChestIndex}] [c/75D1FF:{data.Players.Count}] 人");
         mess.AppendLine($"{rodInfo} {baitInfo}");
         mess.AppendLine($"鱼池:{data.LiqName} [c/61BFE2:{data.MaxLiq}]格");
         mess.AppendLine($"附近 水 [c/61BFE2:{data.WaterCount}]格 岩浆 [c/FF716D:{data.LavaCount}]格 蜂蜜 [c/FFE46D:{data.HoneyCount}]格");
@@ -362,13 +301,13 @@ internal class MyCommand
         if (data.SoloMonster)
         {
             items.Add("禁钓多怪:是");
-            items.Add($"禁怪模式:{(data.SoloMode ? "只钓[c/FFAC6D:1]个" : "不同类各[c/61BBE2:1]个")}");
+            items.Add($"禁怪模式:{(data.SoloMode ? "只钓一个" : "相同不钓")}");
         }
 
         if (Config.RegionSafe)
         {
-            if (data.SafeMode) items.Add($"怪物防护:{(data.RepelMode ? "击退" : "清除")}");
-            if (data.RepelMode) items.Add($"击退力度:{data.RepelPower}");
+            if (data.Safe) items.Add($"怪物防护:{(data.Repel ? "击退" : "清除")}");
+            if (data.Repel) items.Add($"击退力度:{data.Power}");
             if (data.Friendly) items.Add("防友好npc:是");
             if (data.Statue) items.Add("防雕像怪:是");
         }
@@ -397,13 +336,20 @@ internal class MyCommand
         mess.AppendLine($"[c/63D475:环境]:{envStr}");
         plr.SendMessage(TextGradient(mess.ToString()), color2);
 
+        // 缺失用品信息
         FixTip(data, plr);
 
+        // 物品排除表
+        var lines = data.Exclude.Select((id, i) => new { id, i })
+            .GroupBy(x => x.i / 6)
+            .Select(g => string.Join(" ", g.Select(x => ItemIcon(x.id))));
+        var text = data.Exclude.Count > 0 ? $"[c/FFA500:排除表:]\n{string.Join("\n", lines)}" : string.Empty;
+        if (!string.IsNullOrEmpty(text))
+            plr.SendMessage(text, color2);
+
+        // 区域增益
         if (!string.IsNullOrEmpty(customBuff))
             plr.SendMessage("\n" + TextGradient(customBuff), color2);
-
-        if (!string.IsNullOrEmpty(excludeStr))
-            plr.SendMessage($"排除:{excludeStr}", color);
     }
     #endregion
 
@@ -420,14 +366,14 @@ internal class MyCommand
         string customBuff = GetCustomBuffString(data, false);
 
         // 欢迎消息
-        plr.SendMessage(TextGradient($"\n欢迎来到钓鱼机 [c/ED756F:{data.ChestIndex}] [c/75D1FF:{data.RegionPlayers.Count}] 人"), color);
+        plr.SendMessage(TextGradient($"\n欢迎来到钓鱼机 [c/ED756F:{data.ChestIndex}] [c/75D1FF:{data.Players.Count}] 人"), color);
         plr.SendMessage($"归属 [c/E8EB6E:{data.Owner}] {rodInfo} {baitInfo}", color2);
         plr.SendMessage(TextGradient($"环境 {envStr}"), color);
         plr.SendMessage(TextGradient($"鱼池 {data.LiqName} [c/61BFE2:{data.MaxLiq}] 格 渔力 {basePower}({luckText})"), color);
 
-        if (Config.RegionSafe && data.SafeMode)
+        if (Config.RegionSafe && data.Safe)
         {
-            string mode = data.RepelMode ? $"击退 力度 {data.RepelPower}" : "清除";
+            string mode = data.Repel ? $"击退 力度 {data.Power}" : "清除";
             plr.SendMessage(TextGradient($"怪物防护: {mode}"), color);
         }
 
@@ -436,6 +382,14 @@ internal class MyCommand
             string limit = Config.MaxOutChest > 0 ? $"/{Config.MaxOutChest}" : string.Empty;
             plr.SendMessage(TextGradient($"传输箱 {data.OutChests.Count}{limit}个"), color);
         }
+
+        // 物品排除表
+        var lines = data.Exclude.Select((id, i) => new { id, i })
+            .GroupBy(x => x.i / 6)
+            .Select(g => string.Join(" ", g.Select(x => ItemIcon(x.id))));
+        var text = data.Exclude.Count > 0 ? $"[c/FFA500:排除表:]\n{string.Join("\n", lines)}" : string.Empty;
+        if (!string.IsNullOrEmpty(text))
+            plr.SendMessage(text, color2);
 
         // 区域增益
         if (!string.IsNullOrEmpty(customBuff))
@@ -583,12 +537,6 @@ internal class MyCommand
             }
         }
         return sb.ToString();
-    }
-
-    private static string GetExcludeString(MachData data)
-    {
-        if (data.Exclude.Count == 0) return string.Empty;
-        return string.Join(", ", data.Exclude.Select(id => ItemIcon(id)));
     }
     #endregion
 
@@ -1021,18 +969,20 @@ internal class MyCommand
         if (missing.Count == 0)
             return string.Empty;
 
-        return $"[c/FE6352:缺失:] {string.Join("、", missing)}";
+        return $"[c/FE6352:缺失] {string.Join(" ", missing)}";
     }
     #endregion
 
-    #region 传送帮助
-    private static void TPHelp(TSPlayer plr, List<MachData> all)
+    #region 钓鱼机列表方法
+    private static void ListMach(TSPlayer plr, List<MachData> all)
     {
         var idx = 1;
         var sb = new StringBuilder();
-        sb.AppendLine("\n[可传送的钓鱼机]");
+        sb.AppendLine("\n《自动钓鱼机列表》");
         foreach (var data in all)
         {
+            var outMod = data.HasOut ? $" [{data.OutChests.Count}] " : string.Empty;
+
             var env = new List<string>();
             var env2 = GetHeightName(data.HeightLevel);
             if (data.ZoneHallow) env.Add("神圣");
@@ -1044,18 +994,15 @@ internal class MyCommand
             if (data.ZoneBeach) env.Add("海洋");
             if (data.ZoneDungeon) env.Add("地牢");
             if (data.RolledRemixOcean) env.Add("颠倒海洋");
-
-            var outMod = data.HasOut ? $"[{data.OutChests.Count}]" : string.Empty;
-
-            outMod += $"\n环境 {env2},{string.Join(",", env)}";
+            outMod += $"\n - [c/F4FB64:环境] {env2} {string.Join(" ", env)}";
 
             // 显示缺失项（如果有）
             string miss = GetMissItems(data);
             if (!string.IsNullOrEmpty(miss))
-                outMod += ($"\n{miss}");
+                outMod += ($"\n - {miss}");
 
-            sb.AppendLine($"{idx}.{data.Owner}的钓鱼机 [c/ED756F:{data.ChestIndex}] {outMod}");
 
+            sb.AppendLine($" [c/F4FB64:{idx}].{data.Owner}的[c/ED756F:{data.ChestIndex}] {outMod}");
 
             idx++;
         }
@@ -1087,7 +1034,7 @@ internal class MyCommand
                 return;
             }
 
-            TPHelp(plr, all);
+            ListMach(plr, all);
             plr.SendMessage(TextGradient("指定钓鱼机: /afm tp 1"), color);
             plr.SendMessage(TextGradient("循环传输箱: /afm tp 1 c"), color);
             plr.SendMessage(TextGradient("指定传输箱: /afm tp 1 c 2\n"), color);
@@ -1184,7 +1131,7 @@ internal class MyCommand
     {
         if (!TryGetData(plr, out var data, out var err))
         {
-            plr.SendMessage(TextGradient(err),color);
+            plr.SendMessage(TextGradient(err), color);
             return;
         }
 
@@ -1193,7 +1140,7 @@ internal class MyCommand
         // 必须通过打开箱子操作（不能仅靠区域）
         if (plr.ActiveChest == -1)
         {
-            plr.SendMessage(TextGradient("请打开要操作的箱子(可以不是钓鱼箱)"),color);
+            plr.SendMessage(TextGradient("请打开要操作的箱子(可以不是钓鱼箱)"), color);
             return;
         }
 
@@ -1228,8 +1175,9 @@ internal class MyCommand
         var lines = data.Exclude.Select((id, i) => new { id, i })
             .GroupBy(x => x.i / 6)
             .Select(g => string.Join(" ", g.Select(x => ItemIcon(x.id))));
-        var text = data.Exclude.Count > 0 ? $"[c/FFA500:排除物品表:]\n{string.Join("\n", lines)}" : "排除物品表: 空";
-        plr.SendMessage(text, color2);
+        var text = data.Exclude.Count > 0 ? $"[c/FFA500:排除表:]\n{string.Join("\n", lines)}" : string.Empty;
+        if (!string.IsNullOrEmpty(text))
+            plr.SendMessage(text, color2);
     }
     #endregion
 
@@ -1311,7 +1259,7 @@ internal class MyCommand
                     // 切换模式
                     data.SoloMode = !data.SoloMode;
                     Save(data);
-                    string modeDesc = data.SoloMode ? "只钓一个" : "不同类各一个";
+                    string modeDesc = data.SoloMode ? "只钓一个" : "相同不钓";
                     plr.SendMessage(TextGradient($"禁钓模式已切换: {modeDesc}"), color);
                 }
                 else
@@ -1342,14 +1290,14 @@ internal class MyCommand
         sb.AppendLine($"允许钓怪: /{afm} e n [{(data.CustomNPC ? "[c/61E26C:开启]" : "[c/FF716D:关闭]")}]");
 
         sb.AppendLine($"禁钓已有: /{afm} e so [{(data.SoloMonster ? "[c/61E26C:开启]" : "[c/FF716D:关闭]")}]");
-        sb.AppendLine($"禁钓模式: /{afm} e so mod [{(data.SoloMode ? "只钓一个" : "不同类各一个")}]");
+        sb.AppendLine($"禁钓模式: /{afm} e so mod [{(data.SoloMode ? "只钓一个" : "相同不钓")}]");
 
         if (Config.RegionSafe || IsAdmin(plr))
         {
-            sb.AppendLine($"怪物防护: /{afm} e sf [{(data.SafeMode ? "[c/61E26C:开启]" : "[c/FF716D:关闭]")}]");
-            sb.AppendLine($"防护类型: /{afm} e sf r [{(data.RepelMode ? "[c/61E26C:击退]" : "[c/FF716D:清除]")}]");
-            if (data.RepelMode)
-                sb.AppendLine($"击退力度: /{afm} e sf p [{data.RepelPower}]");
+            sb.AppendLine($"怪物防护: /{afm} e sf [{(data.Safe ? "[c/61E26C:开启]" : "[c/FF716D:关闭]")}]");
+            sb.AppendLine($"防护类型: /{afm} e sf r [{(data.Repel ? "[c/61E26C:击退]" : "[c/FF716D:清除]")}]");
+            if (data.Repel)
+                sb.AppendLine($"击退力度: /{afm} e sf p [{data.Power}]");
             sb.AppendLine($"防雕像怪: /{afm} e sf s [{(data.Statue ? "[c/61E26C:开启]" : "[c/FF716D:关闭]")}]");
             sb.AppendLine($"防友好npc: /{afm} e sf f [{(data.Friendly ? "[c/61E26C:开启]" : "[c/FF716D:关闭]")}]");
         }
@@ -1421,9 +1369,9 @@ internal class MyCommand
         if (args.Parameters.Count == 2)
         {
             // 切换开关
-            data.SafeMode = !data.SafeMode;
+            data.Safe = !data.Safe;
             Save(data);
-            plr.SendMessage(TextGradient($"怪物防护已{(data.SafeMode ? "[c/61E26C:开启]" : "[c/FF716D:关闭]")}"), color);
+            plr.SendMessage(TextGradient($"怪物防护已{(data.Safe ? "[c/61E26C:开启]" : "[c/FF716D:关闭]")}"), color);
             return;
         }
 
@@ -1432,9 +1380,9 @@ internal class MyCommand
         {
             case "r":
             case "repel":
-                data.RepelMode = !data.RepelMode;
+                data.Repel = !data.Repel;
                 Save(data);
-                plr.SendMessage(TextGradient($"防护类型: {(data.RepelMode ? "排斥" : "清除")}"), color);
+                plr.SendMessage(TextGradient($"防护类型: {(data.Repel ? "排斥" : "清除")}"), color);
                 break;
             case "f":
             case "friend":
@@ -1453,7 +1401,7 @@ internal class MyCommand
                 {
                     if (args.Parameters.Count < 4)
                     {
-                        plr.SendMessage(TextGradient($"当前力度: {data.RepelPower}"), color);
+                        plr.SendMessage(TextGradient($"当前力度: {data.Power}"), color);
                         plr.SendMessage(TextGradient($"设置力度: /{afm} e sf p 数值"), color);
                         return;
                     }
@@ -1462,7 +1410,7 @@ internal class MyCommand
                         plr.SendMessage(TextGradient("力度请输入 1~100 之间的数字"), color);
                         return;
                     }
-                    data.RepelPower = power;
+                    data.Power = power;
                     Save(data);
                     plr.SendMessage(TextGradient($"击退力度已设为: {power}"), color);
                 }

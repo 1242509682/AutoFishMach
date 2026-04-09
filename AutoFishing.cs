@@ -34,7 +34,7 @@ public class AutoFishing
     public void Execute()
     {
         // 快速跳过：无人/永久缺鱼竿鱼饵/液体已死
-        if ((Config.WhenEmpty && data.RegionPlayers.Count == 0) ||
+        if ((Config.WhenEmpty && data.Players.Count == 0) ||
             data.RodSlot == -2 || data.BaitSlot == -2 || data.LiqDead)
             return;
 
@@ -280,9 +280,9 @@ public class AutoFishing
         if (TakeOne(type, ref slot))
         {
             Time = DateTime.UtcNow.AddMinutes(Min);
-            if (data.RegionPlayers.Count > 0 && !string.IsNullOrEmpty(info))
+            if (data.Players.Count > 0 && !string.IsNullOrEmpty(info))
             {
-                foreach (var plr in data.RegionPlayers)
+                foreach (var plr in data.Players)
                     plr.SendMessage($"钓鱼机 [c/ED756F:{data.ChestIndex}] 已使用{ItemIcon(type)}" +
                                     TextGradient($"获得{Min}分钟{info}"), color2);
             }
@@ -303,9 +303,9 @@ public class AutoFishing
             if (UsedItem.BuffID > 0)
             {
                 data.ActiveZoneBuffs[UsedItem.BuffID] = expiry;
-                if (data.RegionPlayers.Count > 0)
+                if (data.Players.Count > 0)
                 {
-                    foreach (var plr in data.RegionPlayers)
+                    foreach (var plr in data.Players)
                     {
                         plr.SetBuff(UsedItem.BuffID, 300);
                         plr.SendMessage($"钓鱼机 [c/ED756F:{data.ChestIndex}] 已使用{ItemIcon(UsedItem.ItemType)}" +
@@ -413,13 +413,13 @@ public class AutoFishing
 
             if (rule.NPCType > 0)
             {
-                if (!data.CustomNPC || data.RegionPlayers.Count == 0) continue;
+                if (!data.CustomNPC || data.Players.Count == 0) continue;
 
-                if (Config.RegionSafe && Config.AutoOffSafe && data.SafeMode)
+                if (Config.RegionSafe && Config.AutoOffSafe && data.Safe)
                 {
-                    data.SafeMode = false;
+                    data.Safe = false;
                     DataManager.Save(data);
-                    foreach (var tsplr in data.RegionPlayers)
+                    foreach (var tsplr in data.Players)
                         tsplr.SendMessage(TextGradient($"怪物防护已自动[c/FF716D:关闭]"), color2);
 
                     continue;
@@ -440,8 +440,8 @@ public class AutoFishing
                     npc.netUpdate = true;
                     NetMessage.SendData((int)PacketTypes.NpcUpdate, -1, -1, null, npcIndex);
 
-                    if (data.RegionPlayers.Count > 0)
-                        foreach (var tsplr in data.RegionPlayers)
+                    if (data.Players.Count > 0)
+                        foreach (var tsplr in data.Players)
                             tsplr.SendMessage(TextGradient($"钓到了:" +
                                                           $"{Lang.GetNPCNameValue(rule.NPCType)}"), color2);
 
@@ -819,8 +819,8 @@ public class AutoFishing
             int dropX = data.Pos.X * 16 + 8;
             int dropY = data.Pos.Y * 16 + 8;
             int idx = Item.NewItem(null, new Vector2(dropX, dropY), Vector2.Zero, fish.type);
-            if (data.RegionPlayers.Count > 0)
-                foreach (var plr in data.RegionPlayers)
+            if (data.Players.Count > 0)
+                foreach (var plr in data.Players)
                     plr.SendData(PacketTypes.UpdateItemDrop, null, idx);
         }
 
@@ -914,10 +914,10 @@ public class AutoFishing
         }
 
         // 批量播报
-        if (Config.ShowTransferMsg && data.RegionPlayers.Count > 0 && movedMap.Count > 0)
+        if (Config.ShowTransferMsg && data.Players.Count > 0 && movedMap.Count > 0)
         {
             string msg = TextGradient("已转移:") + string.Join(" ", movedMap.Select(kv => ItemIcon(kv.Key, kv.Value)));
-            foreach (var plr in data.RegionPlayers)
+            foreach (var plr in data.Players)
                 plr.SendMessage(msg, color);
         }
     }

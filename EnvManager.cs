@@ -302,12 +302,10 @@ public static class EnvManager
         }
 
         // 3. 距离检查（使用平方距离避免 sqrt）
-        int dx = plr.TileX - data.Pos.X;
-        int dy = plr.TileY - data.Pos.Y;
-        int rangeSq = Config.ZoneRange * Config.ZoneRange;
-        if (dx * dx + dy * dy > rangeSq)
+        Vector2 pos = new Vector2(data.Pos.X * 16 + 8, data.Pos.Y * 16 + 8);
+        if (!plr.TPlayer.WithinRange(pos, Config.ZoneRange * 16))
         {
-            Msg = $"\n距离钓鱼机过远,需在 {Config.ZoneRange} 格内，请靠近后再同步。";
+            Msg = $"距离钓鱼机过远,需在 {Config.ZoneRange} 格内";
             return false;
         }
 
@@ -393,10 +391,8 @@ public static class EnvManager
     public static void SyncZone(TSPlayer plr, MachData data)
     {
         // 距离检查
-        int dx = plr.TileX - data.Pos.X;
-        int dy = plr.TileY - data.Pos.Y;
-        int rangeSq = Config.ZoneRange * Config.ZoneRange;
-        if (dx * dx + dy * dy > rangeSq) return;
+        Vector2 pos = new Vector2(data.Pos.X * 16, data.Pos.Y * 16);
+        if (!plr.TPlayer.WithinRange(pos, Config.ZoneRange * 16)) return;
 
         data.ZoneCorrupt = plr.TPlayer.ZoneCorrupt;
         data.ZoneCrimson = plr.TPlayer.ZoneCrimson;

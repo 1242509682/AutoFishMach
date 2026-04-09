@@ -59,13 +59,13 @@ public class MachData
     [JsonProperty("禁钓已有怪物")]
     public bool SoloMonster { get; set; } = true;
     [JsonProperty("禁钓模式")]
-    public bool SoloMode { get; set; } = false; // true只钓一个 / false不同类各一个 
+    public bool SoloMode { get; set; } = false; // true只钓一个 / false相同不钓
     [JsonProperty("怪物防护")]
-    public bool SafeMode { get; set; } = false;
+    public bool Safe { get; set; } = false;
     [JsonProperty("防护模式")]
-    public bool RepelMode { get; set; } = true; // true=排斥，false=清除
+    public bool Repel { get; set; } = true; // true=排斥，false=清除
     [JsonProperty("击退力度")]
-    public float RepelPower { get; set; } = 5f;
+    public float Power { get; set; } = 5f;
     [JsonProperty("影响友军")]
     public bool Friendly { get; set; } = false; // 是否影响友好NPC
     [JsonProperty("影响雕像")]
@@ -193,7 +193,7 @@ public class MachData
 
     // 区域玩家表
     [JsonIgnore]
-    public HashSet<TSPlayer> RegionPlayers { get; set; } = new();
+    public HashSet<TSPlayer> Players { get; set; } = new();
 
     // 液体数量
     [JsonIgnore]
