@@ -326,7 +326,7 @@ public static class EnvManager
         if (data == null)
         {
             TShock.Regions.DeleteRegion(plr.CurrentRegion.Name);
-            plr.SendMessage(TextGradient($"\n数据丢失，已删除无效区域 {plr.CurrentRegion.Name}"), color);
+            plr.SendMessage(Grad($"\n数据丢失，已删除无效区域 {plr.CurrentRegion.Name}"), color);
             return false;
         }
 
@@ -334,7 +334,7 @@ public static class EnvManager
         {
             UpdateData(data, plr);
             UpdateRegions(data);
-            plr.SendMessage(TextGradient($"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 数据已同步"), color);
+            plr.SendMessage(Grad($"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 数据已同步"), color);
             return true;
         }
         else
@@ -342,12 +342,12 @@ public static class EnvManager
             // 距离不足时设置同步标记，等待箱子打开
             if (error.Contains("距离"))
             {
-                AfmPlrMag.GetPlyData(plr.Name).SyncFlag = true;
-                plr.SendMessage(TextGradient("\n请打开要同步数据的钓鱼机箱子..."), color);
+                AfmPlrMag.GetPlrData(plr.Name).SyncFlag = true;
+                plr.SendMessage(Grad("\n请打开要同步数据的钓鱼机箱子..."), color);
             }
             else
             {
-                plr.SendMessage(TextGradient(error), color);
+                plr.SendMessage(Grad(error), color);
             }
             return false;
         }
@@ -364,7 +364,7 @@ public static class EnvManager
             if (region != null && IsAfmRegion(region.Name) && FindRegion(region.Name) == null)
             {
                 TShock.Regions.DeleteRegion(region.Name);
-                plr.SendMessage(TextGradient($"\n数据丢失，已删除无效区域 {region.Name}"), color);
+                plr.SendMessage(Grad($"\n数据丢失，已删除无效区域 {region.Name}"), color);
             }
             else
             {
@@ -377,12 +377,12 @@ public static class EnvManager
         {
             UpdateData(data, plr);
             UpdateRegions(data);
-            plr.SendMessage(TextGradient($"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 数据已同步"), color);
-            plr.SendMessage(TextGradient($"如果环境错误,请[c/75D1FF:打开一次]钓鱼箱\n"), color);
+            plr.SendMessage(Grad($"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 数据已同步"), color);
+            plr.SendMessage(Grad($"如果环境错误,请[c/75D1FF:打开一次]钓鱼箱\n"), color);
         }
         else
         {
-            plr.SendMessage(TextGradient(error), color);
+            plr.SendMessage(Grad(error), color);
         }
     }
     #endregion

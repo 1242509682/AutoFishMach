@@ -34,17 +34,17 @@ internal class MyCommand
                     // 如果玩家已经在钓鱼机区域内，提示不能重复创建
                     if (plr.CurrentRegion != null && IsAfmRegion(plr.CurrentRegion.Name))
                     {
-                        plr.SendMessage(TextGradient("\n你已经在钓鱼机区域内，不能在此创建新的钓鱼机。"), color);
+                        plr.SendMessage(Grad("\n你已经在钓鱼机区域内，不能在此创建新的钓鱼机。"), color);
                         return;
                     }
 
-                    var afmPly = GetPlyData(plr.Name);
+                    var afmPly = GetPlrData(plr.Name);
 
                     // 设置自定义数据标记，表示玩家正在等待打开箱子
                     if (plr.ActiveChest == -1)
                     {
                         afmPly.SetFlag = true;
-                        plr.SendMessage(TextGradient("\n请打开一个箱子作为自动钓鱼机...\n"), color);
+                        plr.SendMessage(Grad("\n请打开一个箱子作为自动钓鱼机...\n"), color);
                         return;
                     }
 
@@ -55,7 +55,7 @@ internal class MyCommand
                     if (data == null)
                         CreateData(plr, plr.ActiveChest, pos);
                     else
-                        plr.SendMessage(TextGradient("\n该位置已有钓鱼机...\n"), color);
+                        plr.SendMessage(Grad("\n该位置已有钓鱼机...\n"), color);
                 }
                 break;
 
@@ -66,7 +66,7 @@ internal class MyCommand
                     var all = Machines;
                     if (all.Count == 0)
                     {
-                        plr.SendMessage(TextGradient("没有自动钓鱼机"), color);
+                        plr.SendMessage(Grad("没有自动钓鱼机"), color);
                         return;
                     }
                     ListMach(plr, all);
@@ -103,8 +103,8 @@ internal class MyCommand
                     }
 
                     // 3. 否则设置标记，等待玩家打开箱子
-                    GetPlyData(plr.Name).InfoFlag = true;
-                    plr.SendMessage(TextGradient("请打开要查看的钓鱼箱...\n"), color);
+                    GetPlrData(plr.Name).InfoFlag = true;
+                    plr.SendMessage(Grad("请打开要查看的钓鱼箱...\n"), color);
                 }
                 break;
 
@@ -124,8 +124,8 @@ internal class MyCommand
                     if (EnvManager.SyncForCmd(plr)) return;
 
                     // 不在区域内，让玩家打开箱子
-                    GetPlyData(plr.Name).SyncFlag = true;
-                    plr.SendMessage(TextGradient("请打开要同步数据的钓鱼机箱子..."), color);
+                    GetPlrData(plr.Name).SyncFlag = true;
+                    plr.SendMessage(Grad("请打开要同步数据的钓鱼机箱子..."), color);
                 }
                 break;
 
@@ -231,7 +231,7 @@ internal class MyCommand
                 mess.AppendLine($"/{afm} rs - 重置插件数据");
             }
 
-            plr.SendMessage(TextGradient(mess.ToString()), color);
+            plr.SendMessage(Grad(mess.ToString()), color);
 
             // 手游专供提示
             PeText(plr);
@@ -334,7 +334,7 @@ internal class MyCommand
             mess.AppendLine($"鱼饵桶:剩余[c/FF766D:{FormatRemaining((data.ChumBucketTime - DateTime.UtcNow).TotalMinutes)}]");
 
         mess.AppendLine($"[c/63D475:环境]:{envStr}");
-        plr.SendMessage(TextGradient(mess.ToString()), color2);
+        plr.SendMessage(Grad(mess.ToString()), color2);
 
         // 缺失用品信息
         FixTip(data, plr);
@@ -342,14 +342,14 @@ internal class MyCommand
         // 物品排除表
         var lines = data.Exclude.Select((id, i) => new { id, i })
             .GroupBy(x => x.i / 6)
-            .Select(g => string.Join(" ", g.Select(x => ItemIcon(x.id))));
+            .Select(g => string.Join(" ", g.Select(x => Icon(x.id))));
         var text = data.Exclude.Count > 0 ? $"[c/FFA500:排除表:]\n{string.Join("\n", lines)}" : string.Empty;
         if (!string.IsNullOrEmpty(text))
             plr.SendMessage(text, color2);
 
         // 区域增益
         if (!string.IsNullOrEmpty(customBuff))
-            plr.SendMessage("\n" + TextGradient(customBuff), color2);
+            plr.SendMessage("\n" + Grad(customBuff), color2);
     }
     #endregion
 
@@ -366,27 +366,27 @@ internal class MyCommand
         string customBuff = GetCustomBuffString(data, false);
 
         // 欢迎消息
-        plr.SendMessage(TextGradient($"\n欢迎来到钓鱼机 [c/ED756F:{data.ChestIndex}] [c/75D1FF:{data.Players.Count}] 人"), color);
+        plr.SendMessage(Grad($"\n欢迎来到钓鱼机 [c/ED756F:{data.ChestIndex}] [c/75D1FF:{data.Players.Count}] 人"), color);
         plr.SendMessage($"归属 [c/E8EB6E:{data.Owner}] {rodInfo} {baitInfo}", color2);
-        plr.SendMessage(TextGradient($"环境 {envStr}"), color);
-        plr.SendMessage(TextGradient($"鱼池 {data.LiqName} [c/61BFE2:{data.MaxLiq}] 格 渔力 {basePower}({luckText})"), color);
+        plr.SendMessage(Grad($"环境 {envStr}"), color);
+        plr.SendMessage(Grad($"鱼池 {data.LiqName} [c/61BFE2:{data.MaxLiq}] 格 渔力 {basePower}({luckText})"), color);
 
         if (Config.RegionSafe && data.Safe)
         {
             string mode = data.Repel ? $"击退 力度 {data.Power}" : "清除";
-            plr.SendMessage(TextGradient($"怪物防护: {mode}"), color);
+            plr.SendMessage(Grad($"怪物防护: {mode}"), color);
         }
 
         if (data.HasOut)
         {
             string limit = Config.MaxOutChest > 0 ? $"/{Config.MaxOutChest}" : string.Empty;
-            plr.SendMessage(TextGradient($"传输箱 {data.OutChests.Count}{limit}个"), color);
+            plr.SendMessage(Grad($"传输箱 {data.OutChests.Count}{limit}个"), color);
         }
 
         // 物品排除表
         var lines = data.Exclude.Select((id, i) => new { id, i })
             .GroupBy(x => x.i / 6)
-            .Select(g => string.Join(" ", g.Select(x => ItemIcon(x.id))));
+            .Select(g => string.Join(" ", g.Select(x => Icon(x.id))));
         var text = data.Exclude.Count > 0 ? $"[c/FFA500:排除表:]\n{string.Join("\n", lines)}" : string.Empty;
         if (!string.IsNullOrEmpty(text))
             plr.SendMessage(text, color2);
@@ -476,8 +476,8 @@ internal class MyCommand
                 }
             }
         }
-        string rodInfo = rodType > 0 ? $"鱼竿:{ItemIcon(rodType)}" : "鱼竿:无";
-        string baitInfo = baitType > 0 ? $"鱼饵:{ItemIcon(baitType, baitStack)}" : "鱼饵:无";
+        string rodInfo = rodType > 0 ? $"鱼竿:{Icon(rodType)}" : "鱼竿:无";
+        string baitInfo = baitType > 0 ? $"鱼饵:{Icon(baitType, baitStack)}" : "鱼饵:无";
         return (rodInfo, baitInfo);
     }
 
@@ -531,7 +531,7 @@ internal class MyCommand
                 var desc = cmd ? "\n[c/5F9DB8:-]" + item.BuffDesc : string.Empty;
                 if (item.BuffID > 0)
                 {
-                    sb.AppendLine($"{idx}.{Utils.ItemIcon(item.ItemType)} 剩余[c/61BBE2:{FormatRemaining(min)}] {desc}");
+                    sb.AppendLine($"{idx}.{Utils.Icon(item.ItemType)} 剩余[c/61BBE2:{FormatRemaining(min)}] {desc}");
                     idx++;
                 }
             }
@@ -713,7 +713,7 @@ internal class MyCommand
                 var Desc = npc.exists ? " [已加]" : " [未加]";
                 sb.AppendLine($"{idx++}.[c/{color}:{npc.name}({npc.npcType})] 距离:{npc.dist}格 {Desc}");
             }
-            plr.SendMessage(TextGradient(sb.ToString()), color);
+            plr.SendMessage(Grad(sb.ToString()), color);
             return;
         }
 
@@ -799,7 +799,7 @@ internal class MyCommand
         sb.AppendLine($"[c/FFFF00:提示] 只写怪物id 存在移除,不在添加");
         sb.AppendLine($"[c/FFFF00:提示] 列出附近npc时名字为 红=不在 | 绿=存在");
         sb.AppendLine($"[c/FFFF00:示例] /{afm} npc 586 50 血月,肉后");
-        plr.SendMessage(TextGradient(sb.ToString()), color);
+        plr.SendMessage(Grad(sb.ToString()), color);
     }
     #endregion
 
@@ -899,7 +899,7 @@ internal class MyCommand
         {
             sb.AppendLine($"[c/FFFF00:输入 /{afm} lt {page + 1} 查看下一页]");
         }
-        plr.SendMessage(TextGradient(sb.ToString()), color);
+        plr.SendMessage(Grad(sb.ToString()), color);
     }
     #endregion
 
@@ -908,7 +908,7 @@ internal class MyCommand
     {
         string text = GetMissItems(data);
         if (!string.IsNullOrEmpty(text))
-            plr.SendMessage(TextGradient(text), color);
+            plr.SendMessage(Grad(text), color);
     }
 
     /// <summary>
@@ -1006,7 +1006,7 @@ internal class MyCommand
 
             idx++;
         }
-        plr.SendMessage(TextGradient(sb.ToString()), color);
+        plr.SendMessage(Grad(sb.ToString()), color);
     }
     #endregion
 
@@ -1021,7 +1021,7 @@ internal class MyCommand
 
         if (!Config.Teleport && !IsAdmin(plr))
         {
-            plr.SendMessage(TextGradient("传送功能已被管理员禁用"), color);
+            plr.SendMessage(Grad("传送功能已被管理员禁用"), color);
             return;
         }
 
@@ -1030,14 +1030,14 @@ internal class MyCommand
             List<MachData> all = Machines;
             if (all.Count == 0)
             {
-                plr.SendMessage(TextGradient("没有自动钓鱼机"), color);
+                plr.SendMessage(Grad("没有自动钓鱼机"), color);
                 return;
             }
 
             ListMach(plr, all);
-            plr.SendMessage(TextGradient("指定钓鱼机: /afm tp 1"), color);
-            plr.SendMessage(TextGradient("循环传输箱: /afm tp 1 c"), color);
-            plr.SendMessage(TextGradient("指定传输箱: /afm tp 1 c 2\n"), color);
+            plr.SendMessage(Grad("指定钓鱼机: /afm tp 1"), color);
+            plr.SendMessage(Grad("循环传输箱: /afm tp 1 c"), color);
+            plr.SendMessage(Grad("指定传输箱: /afm tp 1 c 2\n"), color);
             return;
         }
 
@@ -1069,7 +1069,7 @@ internal class MyCommand
                     return;
                 }
 
-                var afmPly = GetPlyData(plr.Name);
+                var afmPly = GetPlrData(plr.Name);
                 if (!afmPly.TpIdx.TryGetValue(idx, out int cur) || cur >= data.OutChests.Count)
                     cur = 0;
 
@@ -1086,7 +1086,7 @@ internal class MyCommand
                 int targetY = (outChest.y - 2) * 16;
                 if (plr.Teleport(targetX, targetY))
                 {
-                    plr.SendMessage(TextGradient($"\n已传送 [{cur + 1}/{data.OutChests.Count}] 个传输箱"), color);
+                    plr.SendMessage(Grad($"\n已传送 [{cur + 1}/{data.OutChests.Count}] 个传输箱"), color);
                     afmPly.TpIdx[idx] = cur + 1;
                 }
                 return;
@@ -1108,13 +1108,13 @@ internal class MyCommand
                 int targetY = (outChest.y - 2) * 16;
                 if (plr.Teleport(targetX, targetY))
                 {
-                    plr.SendMessage(TextGradient($"\n已传送第 {outIdx} 个传输箱"), color);
+                    plr.SendMessage(Grad($"\n已传送第 {outIdx} 个传输箱"), color);
                 }
                 return;
             }
 
             // 无效参数，提示帮助
-            plr.SendMessage(TextGradient($"\n用法: /afm tp 序号 [c或序号]"), color);
+            plr.SendMessage(Grad($"\n用法: /afm tp 序号 [c或序号]"), color);
             return;
         }
 
@@ -1122,7 +1122,7 @@ internal class MyCommand
         int mainX = data.Pos.X * 16 + 16;
         int mainY = (data.Pos.Y - 2) * 16;
         if (plr.Teleport(mainX, mainY))
-            plr.SendMessage(TextGradient($"\n已传送钓鱼机: [c/ED756F:{data.ChestIndex}]"), color);
+            plr.SendMessage(Grad($"\n已传送钓鱼机: [c/ED756F:{data.ChestIndex}]"), color);
     }
     #endregion
 
@@ -1131,7 +1131,7 @@ internal class MyCommand
     {
         if (!TryGetData(plr, out var data, out var err))
         {
-            plr.SendMessage(TextGradient(err), color);
+            plr.SendMessage(Grad(err), color);
             return;
         }
 
@@ -1140,7 +1140,7 @@ internal class MyCommand
         // 必须通过打开箱子操作（不能仅靠区域）
         if (plr.ActiveChest == -1)
         {
-            plr.SendMessage(TextGradient("请打开要操作的箱子(可以不是钓鱼箱)"), color);
+            plr.SendMessage(Grad("请打开要操作的箱子(可以不是钓鱼箱)"), color);
             return;
         }
 
@@ -1165,16 +1165,16 @@ internal class MyCommand
 
         if (added == 0 && removed == 0)
         {
-            plr.SendMessage(TextGradient("箱子中没有可操作的物品"), color);
+            plr.SendMessage(Grad("箱子中没有可操作的物品"), color);
             return;
         }
 
         Save(data);
-        plr.SendMessage(TextGradient($"已添加 {added} 个，移除 {removed} 个物品"), color);
+        plr.SendMessage(Grad($"已添加 {added} 个，移除 {removed} 个物品"), color);
 
         var lines = data.Exclude.Select((id, i) => new { id, i })
             .GroupBy(x => x.i / 6)
-            .Select(g => string.Join(" ", g.Select(x => ItemIcon(x.id))));
+            .Select(g => string.Join(" ", g.Select(x => Icon(x.id))));
         var text = data.Exclude.Count > 0 ? $"[c/FFA500:排除表:]\n{string.Join("\n", lines)}" : string.Empty;
         if (!string.IsNullOrEmpty(text))
             plr.SendMessage(text, color2);
@@ -1185,17 +1185,17 @@ internal class MyCommand
     private static void HandleOut(CommandArgs args)
     {
         var plr = args.Player;
-        var afmPly = GetPlyData(plr.Name);
+        var afmPly = GetPlrData(plr.Name);
         if (afmPly.CurSel != null)
         {
             afmPly.CurSel = null;
-            plr.SendMessage(TextGradient("\n已退出传输箱修改"), color);
+            plr.SendMessage(Grad("\n已退出传输箱修改"), color);
             return;
         }
 
         if (!Config.TransferMode && !IsAdmin(plr))
         {
-            plr.SendMessage(TextGradient("传输模式已被管理员禁用"), color);
+            plr.SendMessage(Grad("传输模式已被管理员禁用"), color);
             return;
         }
 
@@ -1204,15 +1204,15 @@ internal class MyCommand
             plr.SendErrorMessage(err);
             // 额外引导
             if (Config.Teleport || IsAdmin(plr))
-                plr.SendMessage(TextGradient($"查看已有传送机:/{afm} tp"), color);
+                plr.SendMessage(Grad($"查看已有传送机:/{afm} tp"), color);
             return;
         }
 
         if (data == null) return;
 
         afmPly.CurSel = new SelData(data.RegName, Config.SelTimer);
-        plr.SendMessage(TextGradient($"\n请在{Config.SelTimer} 秒内打开任意箱子"), color);
-        plr.SendMessage(TextGradient($"如需取消修改,再次输入: /{afm} o"), color);
+        plr.SendMessage(Grad($"\n请在{Config.SelTimer} 秒内打开任意箱子"), color);
+        plr.SendMessage(Grad($"如需取消修改,再次输入: /{afm} o"), color);
     }
     #endregion
 
@@ -1241,14 +1241,14 @@ internal class MyCommand
             case "quest":
                 data.QuestFish = !data.QuestFish;
                 Save(data);
-                plr.SendMessage(TextGradient($"钓任务鱼: {(data.QuestFish ? "开启" : "关闭")}"), color);
+                plr.SendMessage(Grad($"钓任务鱼: {(data.QuestFish ? "开启" : "关闭")}"), color);
                 break;
 
             case "n":
             case "npc":
                 data.CustomNPC = !data.CustomNPC;
                 Save(data);
-                plr.SendMessage(TextGradient($"允许钓怪: {(data.CustomNPC ? "开启" : "关闭")}"), color);
+                plr.SendMessage(Grad($"允许钓怪: {(data.CustomNPC ? "开启" : "关闭")}"), color);
                 break;
 
             case "so":
@@ -1260,14 +1260,14 @@ internal class MyCommand
                     data.SoloMode = !data.SoloMode;
                     Save(data);
                     string modeDesc = data.SoloMode ? "只钓一个" : "相同不钓";
-                    plr.SendMessage(TextGradient($"禁钓模式已切换: {modeDesc}"), color);
+                    plr.SendMessage(Grad($"禁钓模式已切换: {modeDesc}"), color);
                 }
                 else
                 {
                     // 切换开关
                     data.SoloMonster = !data.SoloMonster;
                     Save(data);
-                    plr.SendMessage(TextGradient($"禁钓已有怪物: {(data.SoloMonster ? "开启" : "关闭")}"), color);
+                    plr.SendMessage(Grad($"禁钓已有怪物: {(data.SoloMonster ? "开启" : "关闭")}"), color);
                 }
                 break;
 
@@ -1302,7 +1302,7 @@ internal class MyCommand
             sb.AppendLine($"防友好npc: /{afm} e sf f [{(data.Friendly ? "[c/61E26C:开启]" : "[c/FF716D:关闭]")}]");
         }
 
-        plr.SendMessage(TextGradient(sb.ToString()), color);
+        plr.SendMessage(Grad(sb.ToString()), color);
     }
     #endregion
 
@@ -1362,7 +1362,7 @@ internal class MyCommand
     {
         if (!Config.RegionSafe && !IsAdmin(plr))
         {
-            plr.SendMessage(TextGradient("怪物防护功能已被管理员禁用"), color);
+            plr.SendMessage(Grad("怪物防护功能已被管理员禁用"), color);
             return;
         }
 
@@ -1371,7 +1371,7 @@ internal class MyCommand
             // 切换开关
             data.Safe = !data.Safe;
             Save(data);
-            plr.SendMessage(TextGradient($"怪物防护已{(data.Safe ? "[c/61E26C:开启]" : "[c/FF716D:关闭]")}"), color);
+            plr.SendMessage(Grad($"怪物防护已{(data.Safe ? "[c/61E26C:开启]" : "[c/FF716D:关闭]")}"), color);
             return;
         }
 
@@ -1382,37 +1382,37 @@ internal class MyCommand
             case "repel":
                 data.Repel = !data.Repel;
                 Save(data);
-                plr.SendMessage(TextGradient($"防护类型: {(data.Repel ? "排斥" : "清除")}"), color);
+                plr.SendMessage(Grad($"防护类型: {(data.Repel ? "排斥" : "清除")}"), color);
                 break;
             case "f":
             case "friend":
                 data.Friendly = !data.Friendly;
                 Save(data);
-                plr.SendMessage(TextGradient($"防友好npc: {(data.Friendly ? "[c/61E26C:开启]" : "[c/FF716D:关闭]")}"), color);
+                plr.SendMessage(Grad($"防友好npc: {(data.Friendly ? "[c/61E26C:开启]" : "[c/FF716D:关闭]")}"), color);
                 break;
             case "s":
             case "statue":
                 data.Statue = !data.Statue;
                 Save(data);
-                plr.SendMessage(TextGradient($"防雕像怪: {(data.Statue ? "[c/61E26C:开启]" : "[c/FF716D:关闭]")}"), color);
+                plr.SendMessage(Grad($"防雕像怪: {(data.Statue ? "[c/61E26C:开启]" : "[c/FF716D:关闭]")}"), color);
                 break;
             case "p":
             case "power":
                 {
                     if (args.Parameters.Count < 4)
                     {
-                        plr.SendMessage(TextGradient($"当前力度: {data.Power}"), color);
-                        plr.SendMessage(TextGradient($"设置力度: /{afm} e sf p 数值"), color);
+                        plr.SendMessage(Grad($"当前力度: {data.Power}"), color);
+                        plr.SendMessage(Grad($"设置力度: /{afm} e sf p 数值"), color);
                         return;
                     }
                     if (!float.TryParse(args.Parameters[3], out float power) || power <= 0 || power > 100)
                     {
-                        plr.SendMessage(TextGradient("力度请输入 1~100 之间的数字"), color);
+                        plr.SendMessage(Grad("力度请输入 1~100 之间的数字"), color);
                         return;
                     }
                     data.Power = power;
                     Save(data);
-                    plr.SendMessage(TextGradient($"击退力度已设为: {power}"), color);
+                    plr.SendMessage(Grad($"击退力度已设为: {power}"), color);
                 }
                 break;
             default:

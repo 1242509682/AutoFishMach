@@ -4,7 +4,7 @@ internal class AfmPlrMag
 {
     // 玩家数据类
     public static Dictionary<string, AfmPlayer> PlyDatas = new();
-    public static AfmPlayer GetPlyData(string name)
+    public static AfmPlayer GetPlrData(string name)
     {
         if (!PlyDatas.TryGetValue(name, out var ply))
         {
@@ -17,6 +17,8 @@ internal class AfmPlrMag
 
 public class AfmPlayer
 {
+    public bool PeMess { get; set; } = true;
+    public bool PE { get; set; } = false;
     public bool SetFlag; // /afm set 等待状态
     public bool InfoFlag; // /afm info 等待状态
     public bool SyncFlag; // /afm sync 等待状态
@@ -27,6 +29,7 @@ public class AfmPlayer
 
     public void ClearFlags()
     {
+        PeMess = false;
         SetFlag = false;
         InfoFlag = false;
         SyncFlag = false;

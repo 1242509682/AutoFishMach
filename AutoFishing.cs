@@ -5,6 +5,7 @@ using Terraria.GameContent.Drawing;
 using Terraria.GameContent.FishDropRules;
 using Terraria.ID;
 using TShockAPI;
+using ZstdSharp.Unsafe;
 using static FishMach.MachData;
 using static FishMach.Plugin;
 using static FishMach.Utils;
@@ -49,7 +50,7 @@ public class AutoFishing
                 data.LiquidText = true;
                 data.LiqDead = true; // 标记液体已死，停止后续检测
                 var text = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 鱼池[c/FF716D:液体异常]\n";
-                TSPlayer.All.SendMessage(TextGradient(text), color);
+                TSPlayer.All.SendMessage(Grad(text), color);
 
                 // 清空动画队列，避免播放过时动画
                 data.ClearAnim();
@@ -65,7 +66,7 @@ public class AutoFishing
             if (!data.LavaText)
             {
                 data.LavaText = true;
-                TSPlayer.All.SendMessage(TextGradient($"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 鱼池为岩浆，缺少岩浆用品\n"), color);
+                TSPlayer.All.SendMessage(Grad($"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 鱼池为岩浆，缺少岩浆用品\n"), color);
                 data.ClearAnim();  // 清空动画队列，避免播放过时动画
             }
             return;
@@ -80,7 +81,7 @@ public class AutoFishing
             {
                 data.RodText = true;
                 var text = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 未找到[c/FF716D:鱼竿]\n";
-                TSPlayer.All.SendMessage(TextGradient(text), color);
+                TSPlayer.All.SendMessage(Grad(text), color);
                 data.ClearAnim();  // 清空动画队列，避免播放过时动画
             }
             return;
@@ -94,7 +95,7 @@ public class AutoFishing
             {
                 data.BaitText = true;
                 var text = $"\n钓鱼机 [c/ED756F:{data.ChestIndex}] 未找到[c/FF716D:鱼饵]\n";
-                TSPlayer.All.SendMessage(TextGradient(text), color);
+                TSPlayer.All.SendMessage(Grad(text), color);
                 data.ClearAnim();  // 清空动画队列，避免播放过时动画
             }
             return;
@@ -283,8 +284,8 @@ public class AutoFishing
             if (data.Players.Count > 0 && !string.IsNullOrEmpty(info))
             {
                 foreach (var plr in data.Players)
-                    plr.SendMessage($"钓鱼机 [c/ED756F:{data.ChestIndex}] 已使用{ItemIcon(type)}" +
-                                    TextGradient($"获得{Min}分钟{info}"), color2);
+                    plr.SendMessage($"钓鱼机 [c/ED756F:{data.ChestIndex}] 已使用{Icon(type)}" +
+                                    Grad($"获得{Min}分钟{info}"), color2);
             }
         }
     }
@@ -308,9 +309,9 @@ public class AutoFishing
                     foreach (var plr in data.Players)
                     {
                         plr.SetBuff(UsedItem.BuffID, 300);
-                        plr.SendMessage($"钓鱼机 [c/ED756F:{data.ChestIndex}] 已使用{ItemIcon(UsedItem.ItemType)}" +
-                                        TextGradient($"持续{UsedItem.Minutes}分钟:\n" +
-                                        TextGradient($"[c/5F9DB8:-] {UsedItem.BuffDesc}")), color);
+                        plr.SendMessage($"钓鱼机 [c/ED756F:{data.ChestIndex}] 已使用{Icon(UsedItem.ItemType)}" +
+                                        Grad($"持续{UsedItem.Minutes}分钟:\n" +
+                                        Grad($"[c/5F9DB8:-] {UsedItem.BuffDesc}")), color);
                     }
                 }
             }
@@ -420,7 +421,7 @@ public class AutoFishing
                     data.Safe = false;
                     DataManager.Save(data);
                     foreach (var tsplr in data.Players)
-                        tsplr.SendMessage(TextGradient($"怪物防护已自动[c/FF716D:关闭]"), color2);
+                        tsplr.SendMessage(Grad($"怪物防护已自动[c/FF716D:关闭]"), color2);
 
                     continue;
                 }
@@ -442,7 +443,7 @@ public class AutoFishing
 
                     if (data.Players.Count > 0)
                         foreach (var tsplr in data.Players)
-                            tsplr.SendMessage(TextGradient($"钓到了:" +
+                            tsplr.SendMessage(Grad($"钓到了:" +
                                                           $"{Lang.GetNPCNameValue(rule.NPCType)}"), color2);
 
                     data.Monsters[rule.NPCType] = data.Monsters.GetValueOrDefault(rule.NPCType) + 1;
@@ -819,9 +820,8 @@ public class AutoFishing
             int dropX = data.Pos.X * 16 + 8;
             int dropY = data.Pos.Y * 16 + 8;
             int idx = Item.NewItem(null, new Vector2(dropX, dropY), Vector2.Zero, fish.type);
-            if (data.Players.Count > 0)
-                foreach (var plr in data.Players)
-                    plr.SendData(PacketTypes.UpdateItemDrop, null, idx);
+            NetMessage.SendData((int)PacketTypes.UpdateItemDrop, -1, -1, null, idx);
+            Pick.Add(new PickItem() { idx = idx, Type = fish.type }); // 添加到拾取表
         }
 
         // 触发批量转移
@@ -916,7 +916,7 @@ public class AutoFishing
         // 批量播报
         if (Config.ShowTransferMsg && data.Players.Count > 0 && movedMap.Count > 0)
         {
-            string msg = TextGradient("已转移:") + string.Join(" ", movedMap.Select(kv => ItemIcon(kv.Key, kv.Value)));
+            string msg = Grad("已转移:") + string.Join(" ", movedMap.Select(kv => Icon(kv.Key, kv.Value)));
             foreach (var plr in data.Players)
                 plr.SendMessage(msg, color);
         }
@@ -1006,7 +1006,9 @@ public class AutoFishing
         {
             int dropX = data.Pos.X * 16 + 8;
             int dropY = data.Pos.Y * 16 + 8;
-            Item.NewItem(null, new Vector2(dropX, dropY), Vector2.Zero, item.type, item.stack);
+            var idx = Item.NewItem(null, new Vector2(dropX, dropY), Vector2.Zero, item.type, item.stack);
+            NetMessage.SendData((int)PacketTypes.UpdateItemDrop, -1, -1, null, idx);
+            Pick.Add(new PickItem() { idx = idx, Type = item.type }); // 添加到拾取表
             item.TurnToAir();
             lastTarget = -2;
         }

@@ -21,7 +21,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     public static string PluginName => "自动钓鱼机";
     public override string Name => PluginName;
     public override string Author => "羽学";
-    public override Version Version => new(1, 2, 1);
+    public override Version Version => new(1, 2, 2);
     public override string Description => "使用/afm 指令指定一个箱子作为自动钓鱼机";
     #endregion
 
@@ -58,6 +58,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         ServerApi.Hooks.NpcSpawn.Register(this, OnNpcSpawn);
         ServerApi.Hooks.NpcAIUpdate.Register(this, OnNpcAIUpdate);
         ServerApi.Hooks.NpcKilled.Register(this, OnNPCKilled);
+        ServerApi.Hooks.ItemForceIntoChest.Register(this, OnItemForceIntoChest);
         GetDataHandlers.ChestItemChange += OnChestItemChange!;
         GetDataHandlers.ChestOpen += OnChestOpen!;
         GetDataHandlers.PlayerZone += OnPlayerZone;
@@ -86,6 +87,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             ServerApi.Hooks.NpcSpawn.Deregister(this, OnNpcSpawn);
             ServerApi.Hooks.NpcAIUpdate.Deregister(this, OnNpcAIUpdate);
             ServerApi.Hooks.NpcKilled.Deregister(this, OnNPCKilled);
+            ServerApi.Hooks.ItemForceIntoChest.Deregister(this, OnItemForceIntoChest);
             GetDataHandlers.ChestItemChange -= OnChestItemChange!;
             GetDataHandlers.ChestOpen -= OnChestOpen!;
             GetDataHandlers.PlayerZone -= OnPlayerZone;
@@ -201,6 +203,11 @@ public class Plugin(Main game) : TerrariaPlugin(game)
 
         Timer++;
 
+        // 半小时清理一次拾取表
+        if (Pick.Count > 0 &&
+            Timer % 108000 == 0)
+                Pick.Clear();
+
         // 处理无电路模式 自动钓鱼
         if (!Config.NeedWiring)
             FishSched.Update(Timer);
@@ -277,7 +284,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                     if (sec >= 1 && sec <= 5 && sec != sel.LastRemainSec)
                     {
                         sel.LastRemainSec = sec;
-                        plr?.SendMessage(TextGradient($"离传输箱修改还剩 [c/FF7566:{sec}] 秒"), color);
+                        plr?.SendMessage(Grad($"离传输箱修改还剩 [c/FF7566:{sec}] 秒"), color);
                     }
                 }
                 else
@@ -312,7 +319,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                     string msg = $"传输箱：添加 {added} 个,移除 {removed} 个";
                     if (skipped > 0) msg += $",跳过 {skipped} 个";
                     msg += "\n渔获:从鱼池飞到传输箱 钓出怪物:鱼池原位生成";
-                    plr?.SendMessage(TextGradient(msg), color);
+                    plr?.SendMessage(Grad(msg), color);
                     kv.Value.CurSel = null;
                 }
             }
@@ -495,7 +502,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                         chestSet.Remove(idx);
 
                     Remove(new Point(x2, y2));
-                    TSPlayer.All.SendMessage(TextGradient($"钓鱼机已被摧毁: [c/ED756F:{data.ChestIndex}]"), color);
+                    TSPlayer.All.SendMessage(Grad($"钓鱼机已被摧毁: [c/ED756F:{data.ChestIndex}]"), color);
                 }
 
                 // 处理传输箱
@@ -516,7 +523,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                         }
                     }
                     if (del.Count > 0)
-                        TSPlayer.All.SendMessage(TextGradient($"被摧毁传输箱的钓鱼机: {string.Join(",", del)}"), color);
+                        TSPlayer.All.SendMessage(Grad($"被摧毁传输箱的钓鱼机: {string.Join(",", del)}"), color);
                 }
             }
         }
@@ -542,7 +549,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
 
         var pos = new Point(e.X, e.Y);
 
-        var afmPly = GetPlyData(plr.Name);
+        var afmPly = GetPlrData(plr.Name);
 
         // 处理 set 指令创建模式
         if (data == null && afmPly.SetFlag)
@@ -577,7 +584,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                 if (c == data?.ChestIndex) return;
 
                 afmPly.CurSel.AddChest(c);
-                plr.SendMessage(TextGradient($"已记录传输箱: [c/FF6857:{c}]"), color);
+                plr.SendMessage(Grad($"已记录传输箱: [c/FF6857:{c}]"), color);
             }
             return; // 记录模式下不执行后续钓鱼机逻辑
         }
@@ -605,7 +612,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             }
 
             if (!string.IsNullOrEmpty(text))
-                plr.SendMessage(TextGradient($"异常检测:{text}"), color);
+                plr.SendMessage(Grad($"异常检测:{text}"), color);
 
 
             // 检查区域是否存在，若不存在则重建
@@ -625,7 +632,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                 if (TShock.Regions.AddRegion(left, top, w, h, RegionName, owner, worldId, 0))
                 {
                     TShock.Regions.SetRegionState(RegionName, Config.RegionBuild);
-                    plr.SendMessage(TextGradient($"\n钓鱼机区域已重建"), color);
+                    plr.SendMessage(Grad($"\n钓鱼机区域已重建"), color);
                 }
             }
 
@@ -679,6 +686,38 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     }
     #endregion
 
+    #region 物品放入箱子事件（刷新物品缓存）
+    private void OnItemForceIntoChest(ForceItemIntoChestEventArgs e)
+    {
+        if (!Config.Enabled) return;
+
+        var plr = TShock.Players[e.Player.whoAmI];
+        if (plr == null || !plr.Active) return;
+
+        var data = DataManager.FindChest(e.Chest.index);
+        if (data == null) return;
+
+        // 恢复液体自动检测
+        if (data.LiqDead)
+        {
+            data.LiqDead = false;
+            data.AnimFrame = 0; // 重置动画计时
+        }
+
+        // 更新环境
+        EnvManager.SyncZone(plr, data);
+        // 更新物品缓存
+        EnvManager.SyncItem(data);
+
+        // 如果开启了传输模式且尚未入队，则加入转移队列
+        if (data.HasOut && !data.NeedPut)
+        {
+            data.NeedPut = true;
+            PutQueue.Enqueue(data);
+        }
+    }
+    #endregion
+
     #region 区域进出事件
     private void OnRegionEnter(RegionHooks.RegionEnteredEventArgs args)
     {
@@ -697,7 +736,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             if (region != null)
             {
                 TShock.Regions.DeleteRegion(region.Name);
-                plr.SendMessage(TextGradient($"数据丢失,已删除无效区域 {region.Name}"), color);
+                plr.SendMessage(Grad($"数据丢失,已删除无效区域 {region.Name}"), color);
             }
             return;
         }
@@ -745,12 +784,12 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             data.Players.Remove(plr);
 
         if (Config.RegionBroadcast)
-            plr.SendMessage(TextGradient($"\n你离开了钓鱼机 [c/ED756F:{data.ChestIndex}] 区域\n"), color);
+            plr.SendMessage(Grad($"\n你离开了钓鱼机 [c/ED756F:{data.ChestIndex}] 区域\n"), color);
 
         // 无人自动关闭检查
         if (Config.WhenEmpty && data.Players.Count == 0)
         {
-            plr.SendMessage(TextGradient($"附近没有玩家已自动关闭钓鱼机"), color);
+            plr.SendMessage(Grad($"附近没有玩家已自动关闭钓鱼机"), color);
             data.ClearAnim(); // 清空动画队列
         }
 
@@ -759,16 +798,13 @@ public class Plugin(Main game) : TerrariaPlugin(game)
 
     private void OnServerLeave(LeaveEventArgs args)
     {
-        if (PeList.Contains(args.Who))
-            PeList.Remove(args.Who);
-
         if (!Config.Enabled) return;
 
         var plr = TShock.Players[args.Who];
         if (plr == null) return;
 
         // 移除玩家输出箱选择会话数据
-        var afmPly = GetPlyData(plr.Name);
+        var afmPly = GetPlrData(plr.Name);
         afmPly.ClearAll();
         PlyDatas.Remove(plr.Name);
 
@@ -1011,17 +1047,18 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             if (dir == Vector2.Zero) dir = Vector2.UnitX;
             dir.Normalize();
             p.velocity = dir * p.velocity.Length();
+            // 同步网络
+            p.netUpdate = true;
+            TSPlayer.All.SendData(PacketTypes.ProjectileNew, "", p.whoAmI);
         }
         else
         {
             p.active = false;
             p.type = 0;
             ProjLast.Remove(p.whoAmI);
+            TSPlayer.All.SendData(PacketTypes.ProjectileDestroy, "", p.whoAmI);
         }
 
-        // 同步网络
-        p.netUpdate = true;
-        TSPlayer.All.SendData(PacketTypes.ProjectileNew, "", p.whoAmI);
         ProjLast[p.whoAmI] = now;
         args.Handled = true;
     }
@@ -1033,7 +1070,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         // 检查钓鱼机数量上限
         if (Config.MaxMachines > 0 && Machines.Count >= Config.MaxMachines)
         {
-            plr.SendMessage(TextGradient($"\n已达到最大钓鱼机数量限制:{Config.MaxMachines}"), color);
+            plr.SendMessage(Grad($"\n已达到最大钓鱼机数量限制:{Config.MaxMachines}"), color);
             return;
         }
 
@@ -1065,7 +1102,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         // 重叠检查
         if (IsOverlap(pos, worldId, string.Empty, out left, out top, out w, out h))
         {
-            plr.SendMessage(TextGradient($"\n附近存在区域重叠,无法创建钓鱼机"), color);
+            plr.SendMessage(Grad($"\n附近存在区域重叠,无法创建钓鱼机"), color);
             sw.Stop();
             return;
         }
@@ -1094,7 +1131,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         if (!Config.NeedWiring)
             FishSched.Init();   // 重建队列，包含新机器
         sw.Stop();
-        TSPlayer.All.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{data.ChestIndex}] 创建用时 {sw.ElapsedMilliseconds} ms"), color);
+        TSPlayer.All.SendMessage(Grad($"钓鱼机 [c/ED756F:{data.ChestIndex}] 创建用时 {sw.ElapsedMilliseconds} ms"), color);
     }
     #endregion
 
@@ -1156,7 +1193,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             // 更新区域范围
             if (TShock.Regions.PositionRegion(regionName, left, top, w, h))
             {
-                TSPlayer.All.SendMessage(TextGradient($"钓鱼机 [c/ED756F:{mach.ChestIndex}] 区域已更新"), color);
+                TSPlayer.All.SendMessage(Grad($"钓鱼机 [c/ED756F:{mach.ChestIndex}] 区域已更新"), color);
             }
 
             UpdateRegionChests(mach);
@@ -1192,7 +1229,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         UpdateAllRegionChests();
 
         if (list.Count > 0)
-            TSPlayer.All.SendMessage(TextGradient($"钓鱼机区域已更新:{string.Join(",", list)}"), color);
+            TSPlayer.All.SendMessage(Grad($"钓鱼机区域已更新:{string.Join(",", list)}"), color);
     }
     #endregion
 
@@ -1222,7 +1259,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                               $"1.钓鱼机与其它区域重叠\n" +
                               $"2.与其他钓鱼机距离过近（{Config.Range}格）";
 
-                TShock.Utils.Broadcast(TextGradient(mess), color);
+                TShock.Utils.Broadcast(Grad(mess), color);
             }
 
             return true;
@@ -1246,7 +1283,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             var data = Machines[^1]; // 最后一个
             string info = $"{data.Owner}的钓鱼机 [c/ED756F:{data.ChestIndex}] - {data.Pos.X},{data.Pos.Y}";
             DataManager.Remove(data.Pos); // Remove 内部会清理映射、区域、文件
-            TSPlayer.All.SendMessage(TextGradient($"钓鱼机已达上限 {Config.MaxMachines},已自动删除\n {info}"), color);
+            TSPlayer.All.SendMessage(Grad($"钓鱼机已达上限 {Config.MaxMachines},已自动删除\n {info}"), color);
         }
     }
     #endregion
@@ -1274,38 +1311,108 @@ public class Plugin(Main game) : TerrariaPlugin(game)
 
             if (trimmed > 0)
             {
-                TSPlayer.All.SendMessage(TextGradient($"因配置最大传输箱数调整为 {Config.MaxOutChest}\n已自动移除超出的传输箱。"), color);
+                TSPlayer.All.SendMessage(Grad($"因配置最大传输箱数调整为 {Config.MaxOutChest}\n已自动移除超出的传输箱。"), color);
             }
         }
     }
     #endregion
 
     #region 判断PE玩家方法
-    private static HashSet<int> PeList = new();  // 存储手游玩家的索引
     private void OnNetGetData(GetDataEventArgs args)
     {
         if (args.MsgID != PacketTypes.PlayerPlatformInfo) return;
+
+        var plr = TShock.Players[args.Msg.whoAmI];
 
         // 定位到数据包内容（跳过 PacketId）
         args.Msg.reader.BaseStream.Position = args.Index;
         args.Msg.reader.ReadByte(); // 版本号
         byte platId = args.Msg.reader.ReadByte(); // 平台ID
-        if (platId == 0) PeList.Add(args.Msg.whoAmI); // 0 = 手游(PE)
+        if (platId == 0)
+        {
+            var afmPly = GetPlrData(plr.Name);
+            if (afmPly != null)
+            {
+                afmPly.PE = true;
+                afmPly.PeMess = true;
+            }
+        }
     }
 
     public static void PeText(TSPlayer plr)
     {
-        if (PeList.Contains(plr.Index))
+        var afmPly = GetPlrData(plr.Name);
+        if (afmPly == null || !afmPly.PE) return;
+
+        if (afmPly.PeMess)
         {
             var mess2 = $"\n[c/FC6F62:注:] 聊天按钮放左边[c/FBA562:背包]UI界面\n" +
                         "既能显示[c/56DD77:长文本],也能[c/F2F861:开箱]输指令\n" +
                         "[c/AAAAAA:(仅进服显示1次,后续不再弹出)]\n";
 
-            plr.SendMessage(TextGradient(mess2), color);
+            plr.SendMessage(Grad(mess2), color);
 
-            // 清理PE索引表 确保只提示一次
-            PeList.Remove(plr.Index);
+            afmPly.PeMess = false;
         }
+    }
+    #endregion
+
+    #region 判断物品被拾取方法
+    public class PickItem
+    {
+        // 掉落物索引,物品ID
+        public int idx, Type;
+    }
+    public static List<PickItem> Pick = new List<PickItem>();
+    private void OnPlayerSlot(object? sender, GetDataHandlers.PlayerSlotEventArgs e)
+    {
+        // 拾取表为空则跳过
+        if (!Config.Enabled || Pick.Count == 0) return;
+
+        var plr = e.Player;
+        if (plr == null || !plr.Active ||
+            plr.CurrentRegion == null ||
+            !IsAfmRegion(plr.CurrentRegion.Name)) return;
+
+        var afmPly = GetPlrData(plr.Name);
+        if (afmPly == null || !afmPly.PE) return;
+
+        // 不排除收藏物品,考虑背包可能就有材料
+        if (e.Type == 0 || e.Stack < 1 || e.BlockedSlot || e.Prefix != 0) return;
+
+        // 检查背包（58是手上物品,只检查0到57）
+        bool isInv = e.Slot >= 0 && e.Slot < NetItem.InventorySlots - 1;
+        // 检查虚空袋 （700到739）
+        bool isVoid = e.Slot >= 700 && e.Slot < 740;
+        if (!isInv && !isVoid) return;
+
+        // 倒序循环
+        for (int i = Pick.Count - 1; i >= 0; i--)
+        {
+            var p = Pick[i];
+            var item = Main.item[p.idx];
+
+            // 检查拾取表物品与背包物品相同
+            if (p.Type != e.Type) continue;
+
+            // 检查世界物品是否存在并与背包物品相同
+            if (item.active &&
+                item.type == e.Type)
+                ClearItem(p.idx);
+
+            // 从拾取表移除
+            Pick.RemoveAt(i);
+            return; // 只清除第一个匹配的物品
+        }
+    }
+    #endregion
+
+    #region 清理掉落物方法
+    private static void ClearItem(int i)
+    {
+        Main.item[i].TurnToAir();
+        NetMessage.SendData((int)PacketTypes.UpdateItemDrop, -1, -1, null, i);
+        NetMessage.SendData((int)PacketTypes.SyncItemDespawn, -1, -1, null, i);
     }
     #endregion
 
