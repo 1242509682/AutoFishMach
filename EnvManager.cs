@@ -53,7 +53,7 @@ public static class EnvManager
                 Config.CustomPowerItems.TryGetValue(item.type, out int power))
                 data.ExtraPower += power;
 
-            if (lavaItemsSet.Contains(item.type))
+            if (lavaItemsSet.Contains(item.type) || ItemID.Sets.CanFishInLava[item.type] || ItemID.Sets.IsLavaBait[item.type])
                 data.CanFishInLava = true;
 
             if (item.type == ItemID.TackleBox ||
