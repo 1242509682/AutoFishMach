@@ -266,8 +266,7 @@ public static class EnvManager
         if (data.LiqType == LiquidID.Water && bestTotal > 999)
         {
             var plr = SetPlayer(data);
-            if (plr.ZoneDesert && !plr.ZoneBeach)
-                bestTotal = 999;
+            if (!plr.ZoneBeach) bestTotal = 999;
         }
 
         data.MaxLiq = bestTotal;
