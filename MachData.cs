@@ -70,62 +70,6 @@ public class MachData
     public bool Friendly { get; set; } = false; // 是否影响友好NPC
     [JsonProperty("影响雕像")]
     public bool Statue { get; set; } = false; // 是否影响雕像生成的NPC
-    [JsonProperty("神圣")]
-    public bool ZoneHallow { get; set; }
-    [JsonProperty("腐化")]
-    public bool ZoneCorrupt { get; set; }
-    [JsonProperty("猩红")]
-    public bool ZoneCrimson { get; set; }
-    [JsonProperty("丛林")]
-    public bool ZoneJungle { get; set; }
-    [JsonProperty("雪原")]
-    public bool ZoneSnow { get; set; }
-    [JsonProperty("沙漠")]
-    public bool ZoneDesert { get; set; }
-    [JsonProperty("地下沙漠")]
-    public bool ZoneUndergroundDesert { get; set; }
-    [JsonProperty("海洋")]
-    public bool ZoneBeach { get; set; }
-    [JsonProperty("地牢")]
-    public bool ZoneDungeon { get; set; }
-    [JsonProperty("下雨")]
-    public bool ZoneRain { get; set; }
-    [JsonProperty("沙尘暴")]
-    public bool ZoneSandstorm { get; set; }
-    [JsonProperty("蘑菇地")]
-    public bool ZoneGlowshroom { get; set; }
-    [JsonProperty("微光")]
-    public bool ZoneShimmer { get; set; }
-    [JsonProperty("影烛")]
-    public bool ZoneShadowCandle { get; set; }
-    [JsonProperty("水蜡烛")]
-    public bool ZoneWaterCandle { get; set; }
-    [JsonProperty("和平蜡烛")]
-    public bool ZonePeaceCandle { get; set; }
-    [JsonProperty("墓地")]
-    public bool ZoneGraveyard { get; set; }
-    [JsonProperty("花岗岩")]
-    public bool ZoneGranite { get; set; }
-    [JsonProperty("大理石")]
-    public bool ZoneMarble { get; set; }
-    [JsonProperty("陨石坑")]
-    public bool ZoneMeteor { get; set; }
-    [JsonProperty("宝石洞")]
-    public bool ZoneGemCave { get; set; }
-    [JsonProperty("蜂巢")]
-    public bool ZoneHive { get; set; }
-    [JsonProperty("神庙")]
-    public bool ZoneLihzhardTemple { get; set; }
-    [JsonProperty("撒旦入侵")]
-    public bool ZoneOldOneArmy { get; set; }
-    [JsonProperty("星云天塔柱")]
-    public bool ZoneTowerNebula { get; set; }
-    [JsonProperty("日耀天塔柱")]
-    public bool ZoneTowerSolar { get; set; }
-    [JsonProperty("星尘天塔柱")]
-    public bool ZoneTowerStardust { get; set; }
-    [JsonProperty("星漩天塔柱")]
-    public bool ZoneTowerVortex { get; set; }
     [JsonProperty("高度等级")]
     public int HeightLevel { get; set; }
     [JsonProperty("颠倒海洋")]
@@ -140,6 +84,15 @@ public class MachData
     public string LiqName { get; set; }
     [JsonProperty("鱼池格数")]
     public int MaxLiq { get; set; }
+
+    // 液体数量
+    [JsonProperty("水格数")]
+    public int WaterCount { get; set; }
+    [JsonProperty("岩浆格数")]
+    public int LavaCount { get; set; }
+    [JsonProperty("蜂蜜格数")]
+    public int HoneyCount { get; set; }
+
     [JsonProperty("液体坐标")]
     public Point LiqPos { get; set; } = new Point(-1, -1);
     [JsonProperty("幸运值")]
@@ -195,14 +148,6 @@ public class MachData
     [JsonIgnore]
     public HashSet<TSPlayer> Players { get; set; } = new();
 
-    // 液体数量
-    [JsonIgnore]
-    public int WaterCount { get; set; }
-    [JsonIgnore]
-    public int LavaCount { get; set; }
-    [JsonIgnore]
-    public int HoneyCount { get; set; }
-
     // 初始化标志
     [JsonIgnore]
     public bool IntMach { get; set; } = true;
@@ -222,8 +167,6 @@ public class MachData
     public bool[] Visited { get; set; }          // BFS 访问标记
     [JsonIgnore]
     public Queue<(int x, int y)> LiqQueue { get; set; } = new(); // BFS 队列
-    [JsonIgnore]
-    public DateTime LastZoneUpdate { get; set; } = DateTime.MinValue; // 环境同步冷却
 
     // 动画队列和计时
     [JsonIgnore]

@@ -398,7 +398,7 @@ public class AutoFishing
     #region 自定义渔获
     private void CustomFishes(Item rodItem, ref bool allow)
     {
-        var plr = EnvManager.SetPlayer(data, true);
+        var plr = EnvManager.SetPlayer(data);
 
         foreach (var rule in Config.CustomFishes)
         {
@@ -472,23 +472,14 @@ public class AutoFishing
         if (Main.remixWorld && heightLevel == 2 && Main.rand.Next(2) == 0)
             heightLevel = 1;
 
-        bool corruption = plr.ZoneCorrupt;
-        bool crimson = plr.ZoneCrimson;
-        bool jungle = plr.ZoneJungle;
-        bool snow = plr.ZoneSnow;
-        bool hallow = plr.ZoneHallow;
-        bool desert = plr.ZoneDesert;
-        bool beach = plr.ZoneBeach;
-        bool rolledRemixOcean = data.RolledRemixOcean;
-
-        if (corruption && crimson)
+        if (plr.ZoneCorrupt && plr.ZoneCrimson)
         {
-            if (Main.rand.Next(2) == 0) crimson = false;
-            else corruption = false;
+            if (Main.rand.Next(2) == 0) plr.ZoneCrimson = false;
+            else plr.ZoneCorrupt = false;
         }
-        if (jungle && snow && Main.rand.Next(2) == 0) jungle = false;
+        if (plr.ZoneJungle && plr.ZoneSnow && Main.rand.Next(2) == 0) plr.ZoneJungle = false;
 
-        bool infectedDesert = desert && (corruption || crimson || hallow);
+        bool infectedDesert = plr.ZoneDesert && (plr.ZoneCorrupt || plr.ZoneCrimson || plr.ZoneHallow);
 
         int maxLiq = data.MaxLiq, water = data.WaterCount, lava = data.LavaCount, honey = data.HoneyCount;
         if (Main.notTheBeesWorld && Main.rand.Next(2) == 0) honey = 0;
@@ -534,13 +525,13 @@ public class AutoFishing
             Random = Main.rand,
             Fisher = new FishingAttempt(),
             Player = plr,
-            RolledCorruption = corruption,
-            RolledCrimson = crimson,
-            RolledJungle = jungle,
-            RolledSnow = snow,
-            RolledDesert = desert,
+            RolledCorruption = plr.ZoneCorrupt,
+            RolledCrimson = plr.ZoneCrimson,
+            RolledJungle = plr.ZoneJungle,
+            RolledSnow = plr.ZoneSnow,
+            RolledDesert = plr.ZoneDesert,
             RolledInfectedDesert = infectedDesert && Main.rand.Next(2) == 0,
-            RolledRemixOcean = rolledRemixOcean
+            RolledRemixOcean = data.RolledRemixOcean
         };
 
         fc.Fisher.common = common;

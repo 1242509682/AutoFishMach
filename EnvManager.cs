@@ -1,4 +1,5 @@
-﻿using Microsoft.Xna.Framework;
+﻿using System.Reflection;
+using Microsoft.Xna.Framework;
 using Terraria;
 using Terraria.ID;
 using TShockAPI;
@@ -244,7 +245,6 @@ public static class EnvManager
         data.WaterCount = bestWater;
         data.LavaCount = bestLava;
         data.HoneyCount = bestHoney;
-        data.MaxLiq = bestTotal;
 
         if (bestHoney == bestTotal)
         {
@@ -262,6 +262,15 @@ public static class EnvManager
             data.LiqType = LiquidID.Water;
         }
 
+        // 沙漠水坑限制：超过999格视为999，避免被误判为海洋
+        if (data.LiqType == LiquidID.Water && bestTotal > 999)
+        {
+            var plr = SetPlayer(data);
+            if (plr.ZoneDesert && !plr.ZoneBeach)
+                bestTotal = 999;
+        }
+
+        data.MaxLiq = bestTotal;
         data.LiqPos = bestLiqPos != Point.Zero ? bestLiqPos : data.Pos;
     }
     #endregion
@@ -387,95 +396,16 @@ public static class EnvManager
     }
     #endregion
 
-    #region 更新缓存环境（需距离检查）
-    public static void SyncZone(TSPlayer plr, MachData data)
+    #region 设置假玩家
+    public static Player SetPlayer(MachData data)
     {
-        // 距离检查
-        Vector2 pos = new Vector2(data.Pos.X * 16, data.Pos.Y * 16);
-        if (!plr.TPlayer.WithinRange(pos, Config.ZoneRange * 16)) return;
-
-        data.ZoneCorrupt = plr.TPlayer.ZoneCorrupt;
-        data.ZoneCrimson = plr.TPlayer.ZoneCrimson;
-        data.ZoneJungle = plr.TPlayer.ZoneJungle;
-        data.ZoneSnow = plr.TPlayer.ZoneSnow;
-        data.ZoneHallow = plr.TPlayer.ZoneHallow;
-        data.ZoneDesert = plr.TPlayer.ZoneDesert;
-        data.ZoneBeach = plr.TPlayer.ZoneBeach;
-        data.ZoneDungeon = plr.TPlayer.ZoneDungeon;
-        data.ZoneRain = plr.TPlayer.ZoneRain;
-        data.ZoneShimmer = plr.TPlayer.ZoneShimmer;
-        data.ZoneSandstorm = plr.TPlayer.ZoneSandstorm;
-        data.ZoneShadowCandle = plr.TPlayer.ZoneShadowCandle;
-        data.ZoneWaterCandle = plr.TPlayer.ZoneWaterCandle;
-        data.ZonePeaceCandle = plr.TPlayer.ZonePeaceCandle;
-        data.ZoneGraveyard = plr.TPlayer.ZoneGraveyard;
-        data.ZoneGranite = plr.TPlayer.ZoneGranite;
-        data.ZoneMarble = plr.TPlayer.ZoneMarble;
-        data.ZoneMeteor = plr.TPlayer.ZoneMeteor;
-        data.ZoneGlowshroom = plr.TPlayer.ZoneGlowshroom;
-        data.ZoneGemCave = plr.TPlayer.ZoneGemCave;
-        data.ZoneHive = plr.TPlayer.ZoneHive;
-        data.ZoneLihzhardTemple = plr.TPlayer.ZoneLihzhardTemple;
-        data.ZoneOldOneArmy = plr.TPlayer.ZoneOldOneArmy;
-        data.ZoneTowerNebula = plr.TPlayer.ZoneTowerNebula;
-        data.ZoneTowerSolar = plr.TPlayer.ZoneTowerSolar;
-        data.ZoneTowerStardust = plr.TPlayer.ZoneTowerStardust;
-        data.ZoneTowerVortex = plr.TPlayer.ZoneTowerVortex;
-        data.ZoneUndergroundDesert = plr.TPlayer.ZoneUndergroundDesert;
-        data.luck = plr.TPlayer.luck;
-    }
-    #endregion
-
-    #region 将缓存环境赋值给假玩家
-    public static Player SetPlayer(MachData data, bool Custom = false)
-    {
-        var plr = new Player();
-        plr.position = new Vector2(data.Pos.X * 16, data.Pos.Y * 16);
-        // plr.UpdateBiomes();
-        plr.ZoneHallow = data.ZoneHallow; // 神圣
-        plr.ZoneCorrupt = data.ZoneCorrupt; //腐化
-        plr.ZoneCrimson = data.ZoneCrimson; // 猩红
-        plr.ZoneJungle = data.ZoneJungle; // 丛林
-        plr.ZoneSnow = data.ZoneSnow; // 雪原
-        plr.ZoneDesert = data.ZoneDesert; // 沙漠
-        plr.ZoneBeach = data.ZoneBeach; // 海洋
-        plr.ZoneDungeon = data.ZoneDungeon; // 地牢
-
-        plr.luck = data.luck; // 幸运值
-
-        int hl = data.HeightLevel;
-        plr.ZoneSkyHeight = hl == 0; // 天空
-        plr.ZoneOverworldHeight = hl == 1; // 地表
-        plr.ZoneDirtLayerHeight = hl == 2; // 地下
-        plr.ZoneRockLayerHeight = hl == 3; // 洞穴
-        plr.ZoneUnderworldHeight = hl == 4; // 地狱
-
-        // 给自定义渔获用的 常规钓鱼 用上面就够
-        if (Custom)
-        {
-            plr.ZoneShimmer = data.ZoneShimmer; // 微光
-            plr.ZoneRain = data.ZoneRain; // 下雨
-            plr.ZoneSandstorm = data.ZoneSandstorm; // 沙尘暴
-            plr.ZoneShadowCandle = data.ZoneShadowCandle; // 影烛 
-            plr.ZoneWaterCandle = data.ZoneWaterCandle; // 水蜡烛 
-            plr.ZonePeaceCandle = data.ZonePeaceCandle; // 和平蜡烛 
-            plr.ZoneGraveyard = data.ZoneGraveyard; // 墓地 
-            plr.ZoneGranite = data.ZoneGranite; // 花岗岩 
-            plr.ZoneMarble = data.ZoneMarble; // 大理石 
-            plr.ZoneMeteor = data.ZoneMeteor; // 陨石坑 
-            plr.ZoneGlowshroom = data.ZoneGlowshroom; // 蘑菇地 
-            plr.ZoneGemCave = data.ZoneGemCave; // 宝石洞 
-            plr.ZoneHive = data.ZoneHive; // 蜂巢 
-            plr.ZoneLihzhardTemple = data.ZoneLihzhardTemple; // 神庙 
-            plr.ZoneOldOneArmy = data.ZoneOldOneArmy; // 旧日军团 
-            plr.ZoneTowerNebula = data.ZoneTowerNebula; // 星云天塔柱 
-            plr.ZoneTowerSolar = data.ZoneTowerSolar; // 日耀天塔柱 
-            plr.ZoneTowerStardust = data.ZoneTowerStardust; // 星尘天塔柱 
-            plr.ZoneTowerVortex = data.ZoneTowerVortex; // 星漩天塔柱 
-            plr.ZoneUndergroundDesert = data.ZoneUndergroundDesert; // 地下沙漠 
-        }
-
-        return plr;
+        var plr = new TSPlayer(254);
+        var fake = typeof(TSPlayer).GetField("FakePlayer", BindingFlags.Instance | BindingFlags.NonPublic)!;
+        fake.SetValue(plr, plr.TPlayer);
+        plr.TPlayer.position = new Vector2(data.Pos.X * 16, data.Pos.Y * 16);
+        plr.TPlayer.UpdateSceneMetrics();
+        plr.TPlayer.UpdateBiomes();
+        return plr.TPlayer;
     }
     #endregion
 

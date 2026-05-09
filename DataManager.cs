@@ -150,16 +150,20 @@ internal class DataManager
         }
 
         var files = Directory.GetFiles(CacheDir, "*.json");
-        var newMachines = new List<MachData>();
+        var newMach = new List<MachData>();
 
         foreach (var file in files)
         {
             try
             {
                 var data = JsonConvert.DeserializeObject<MachData>(File.ReadAllText(file));
-                if (data?.WorldId != Main.worldID.ToString())
+                if (data == null) continue;
+                
+                // 如果文件中存在 WorldId 且与当前世界 ID 不一致，则跳过（空或不存在则视为兼容）
+                if (!string.IsNullOrEmpty(data.WorldId) && data.WorldId != Main.worldID.ToString())
                     continue;
-                newMachines.Add(data);
+
+                newMach.Add(data);
             }
             catch (Exception ex)
             {
@@ -174,7 +178,7 @@ internal class DataManager
         OutChestMap.Clear();
 
         // 赋值新列表
-        Machines = newMachines;
+        Machines = newMach;
 
         // 重建字典映射
         foreach (var data in Machines)

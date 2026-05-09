@@ -484,35 +484,35 @@ internal class MyCommand
     private static string GetEnvString(MachData data)
     {
         var env = new List<string>();
-        if (data.ZoneHallow) env.Add("神圣");
-        if (data.ZoneCorrupt) env.Add("腐化");
-        if (data.ZoneCrimson) env.Add("猩红");
-        if (data.ZoneJungle) env.Add("丛林");
-        if (data.ZoneSnow) env.Add("雪原");
-        if (data.ZoneDesert) env.Add("沙漠");
-        if (data.ZoneBeach) env.Add("海洋");
-        if (data.ZoneDungeon) env.Add("地牢");
-        if (data.ZoneShimmer) env.Add("微光");
-        if (data.ZoneSandstorm) env.Add("沙尘暴");
-        if (data.ZoneShadowCandle) env.Add("影烛");
-        if (data.ZoneWaterCandle) env.Add("水蜡烛");
-        if (data.ZonePeaceCandle) env.Add("和平蜡烛");
-        if (data.ZoneGraveyard) env.Add("墓地");
-        if (data.ZoneGranite) env.Add("花岗岩");
-        if (data.ZoneMarble) env.Add("大理石");
-        if (data.ZoneMeteor) env.Add("陨石");
-        if (data.ZoneGlowshroom) env.Add("蘑菇地");
-        if (data.ZoneGemCave) env.Add("宝石洞");
-        if (data.ZoneHive) env.Add("蜂巢");
-        if (data.ZoneLihzhardTemple) env.Add("神庙");
-        if (data.ZoneOldOneArmy) env.Add("旧日军团");
-        if (data.ZoneTowerNebula) env.Add("星云柱");
-        if (data.ZoneTowerSolar) env.Add("日耀柱");
-        if (data.ZoneTowerStardust) env.Add("星尘柱");
-        if (data.ZoneTowerVortex) env.Add("星旋柱");
-        if (data.ZoneUndergroundDesert) env.Add("地下沙漠");
+        var plr = EnvManager.SetPlayer(data);
+        if (plr.ZoneHallow) env.Add("神圣");
+        if (plr.ZoneCorrupt) env.Add("腐化");
+        if (plr.ZoneCrimson) env.Add("猩红");
+        if (plr.ZoneJungle) env.Add("丛林");
+        if (plr.ZoneSnow) env.Add("雪原");
+        if (plr.ZoneDesert) env.Add("沙漠");
+        if (plr.ZoneBeach) env.Add("海洋");
+        if (plr.ZoneDungeon) env.Add("地牢");
+        if (plr.ZoneShimmer) env.Add("微光");
+        if (plr.ZoneSandstorm) env.Add("沙尘暴");
+        if (plr.ZoneShadowCandle) env.Add("影烛");
+        if (plr.ZoneWaterCandle) env.Add("水蜡烛");
+        if (plr.ZonePeaceCandle) env.Add("和平蜡烛");
+        if (plr.ZoneGraveyard) env.Add("墓地");
+        if (plr.ZoneGranite) env.Add("花岗岩");
+        if (plr.ZoneMarble) env.Add("大理石");
+        if (plr.ZoneMeteor) env.Add("陨石");
+        if (plr.ZoneGlowshroom) env.Add("蘑菇地");
+        if (plr.ZoneGemCave) env.Add("宝石洞");
+        if (plr.ZoneHive) env.Add("蜂巢");
+        if (plr.ZoneLihzhardTemple) env.Add("神庙");
+        if (plr.ZoneOldOneArmy) env.Add("旧日军团");
+        if (plr.ZoneTowerNebula) env.Add("星云柱");
+        if (plr.ZoneTowerSolar) env.Add("日耀柱");
+        if (plr.ZoneTowerStardust) env.Add("星尘柱");
+        if (plr.ZoneTowerVortex) env.Add("星旋柱");
+        if (plr.ZoneUndergroundDesert) env.Add("地下沙漠");
         if (data.RolledRemixOcean) env.Add("颠倒海洋");
-
         string height = GetHeightName(data.HeightLevel);
         return $"{height},{string.Join(",", env)}";
     }
@@ -985,14 +985,15 @@ internal class MyCommand
 
             var env = new List<string>();
             var env2 = GetHeightName(data.HeightLevel);
-            if (data.ZoneHallow) env.Add("神圣");
-            if (data.ZoneCorrupt) env.Add("腐化");
-            if (data.ZoneCrimson) env.Add("猩红");
-            if (data.ZoneJungle) env.Add("丛林");
-            if (data.ZoneSnow) env.Add("雪原");
-            if (data.ZoneDesert) env.Add("沙漠");
-            if (data.ZoneBeach) env.Add("海洋");
-            if (data.ZoneDungeon) env.Add("地牢");
+            var plr2 = EnvManager.SetPlayer(data);
+            if (plr2.ZoneHallow) env.Add("神圣");
+            if (plr2.ZoneCorrupt) env.Add("腐化");
+            if (plr2.ZoneCrimson) env.Add("猩红");
+            if (plr2.ZoneJungle) env.Add("丛林");
+            if (plr2.ZoneSnow) env.Add("雪原");
+            if (plr2.ZoneDesert) env.Add("沙漠");
+            if (plr2.ZoneBeach) env.Add("海洋");
+            if (plr2.ZoneDungeon) env.Add("地牢");
             if (data.RolledRemixOcean) env.Add("颠倒海洋");
             outMod += $"\n - [c/F4FB64:环境] {env2} {string.Join(" ", env)}";
 

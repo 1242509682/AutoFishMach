@@ -21,7 +21,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     public static string PluginName => "自动钓鱼机";
     public override string Name => PluginName;
     public override string Author => "羽学";
-    public override Version Version => new(1, 2, 3);
+    public override Version Version => new(1, 2, 4);
     public override string Description => "使用/afm 指令指定一个箱子作为自动钓鱼机";
     #endregion
 
@@ -61,7 +61,6 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         ServerApi.Hooks.ItemForceIntoChest.Register(this, OnItemForceIntoChest);
         GetDataHandlers.ChestItemChange += OnChestItemChange!;
         GetDataHandlers.ChestOpen += OnChestOpen!;
-        GetDataHandlers.PlayerZone += OnPlayerZone;
         GetDataHandlers.PlayerBuffUpdate += OnPlayerBuffUpdate!;
         GetDataHandlers.LiquidSet += OnLiquidSet!;
         GetDataHandlers.NewProjectile += OnNewProjectile;
@@ -90,7 +89,6 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             ServerApi.Hooks.ItemForceIntoChest.Deregister(this, OnItemForceIntoChest);
             GetDataHandlers.ChestItemChange -= OnChestItemChange!;
             GetDataHandlers.ChestOpen -= OnChestOpen!;
-            GetDataHandlers.PlayerZone -= OnPlayerZone;
             GetDataHandlers.PlayerBuffUpdate -= OnPlayerBuffUpdate!;
             GetDataHandlers.LiquidSet -= OnLiquidSet!;
             GetDataHandlers.NewProjectile -= OnNewProjectile;
@@ -376,34 +374,7 @@ public class Plugin(Main game) : TerrariaPlugin(game)
     }
     #endregion
 
-    #region 环境同步事件（环境变化、液体修改、弹幕生成）
-    private void OnPlayerZone(object? sender, PlayerZoneEventArgs e)
-    {
-        if (!Config.Enabled) return;
-
-        var plr = e.Player;
-        if (plr == null || !plr.Active ||
-            plr.CurrentRegion == null ||
-            !IsAfmRegion(plr.CurrentRegion.Name)) return;
-
-        var data = FindRegion(plr.CurrentRegion.Name);
-        if (data == null) return;
-
-        // 恢复液体自动检测
-        if (data.LiqDead)
-        {
-            data.LiqDead = false;
-            data.AnimFrame = 0; // 重置动画计时
-        }
-
-        // 同步环境（生物群落、幸运值等）
-        if ((DateTime.UtcNow - data.LastZoneUpdate).TotalSeconds >= 10)
-        {
-            EnvManager.SyncZone(plr, data);
-            data.LastZoneUpdate = DateTime.UtcNow;
-        }
-    }
-
+    #region 水位同步事件（液体修改、弹幕生成）
     private void OnLiquidSet(object? sender, LiquidSetEventArgs e)
     {
         if (!Config.Enabled || e.Amount <= 0) return;
@@ -636,8 +607,6 @@ public class Plugin(Main game) : TerrariaPlugin(game)
                 }
             }
 
-            // 更新环境
-            EnvManager.SyncZone(plr, data);
             // 更新物品缓存
             EnvManager.SyncItem(data);
 
@@ -673,10 +642,9 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             data.AnimFrame = 0; // 重置动画计时
         }
 
-        // 更新环境
-        EnvManager.SyncZone(plr, data);
         // 更新物品缓存
         EnvManager.SyncItem(data);
+
         // 如果开启了传输模式且尚未入队，则加入转移队列
         if (data.HasOut && !data.NeedPut)
         {
@@ -704,8 +672,6 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             data.AnimFrame = 0; // 重置动画计时
         }
 
-        // 更新环境
-        EnvManager.SyncZone(plr, data);
         // 更新物品缓存
         EnvManager.SyncItem(data);
 
@@ -1157,8 +1123,6 @@ public class Plugin(Main game) : TerrariaPlugin(game)
             data.IntMach = false;
         }
 
-        // 刷新钓鱼环境
-        EnvManager.SyncZone(plr, data);
         // 刷新物品缓存
         EnvManager.SyncItem(data);
         // 计算一次液体
@@ -1277,13 +1241,12 @@ public class Plugin(Main game) : TerrariaPlugin(game)
         int toRemove = Machines.Count - Config.MaxMachines;
         if (toRemove <= 0) return;
 
-        // 从末尾开始删除（最后创建的）
         for (int i = 0; i < toRemove; i++)
         {
             var data = Machines[^1]; // 最后一个
             string info = $"{data.Owner}的钓鱼机 [c/ED756F:{data.ChestIndex}] - {data.Pos.X},{data.Pos.Y}";
-            DataManager.Remove(data.Pos); // Remove 内部会清理映射、区域、文件
-            TSPlayer.All.SendMessage(Grad($"钓鱼机已达上限 {Config.MaxMachines},已自动删除\n {info}"), color);
+            Remove(data.Pos); // Remove 内部会清理映射、区域、文件
+            TShock.Utils.Broadcast($"钓鱼机已达上限 {Config.MaxMachines},已自动删除\n {info}", color);
         }
     }
     #endregion
