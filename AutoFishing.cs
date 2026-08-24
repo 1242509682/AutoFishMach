@@ -810,7 +810,7 @@ public class AutoFishing
             // 没有箱子能放，直接掉落地面（无动画）
             int dropX = data.Pos.X * 16 + 8;
             int dropY = data.Pos.Y * 16 + 8;
-            int idx = Item.NewItem(null, new Vector2(dropX, dropY), Vector2.Zero, fish.type);
+            int idx = Item.NewItem(null, new Vector2(dropX, dropY), fish.type);
             NetMessage.SendData((int)PacketTypes.UpdateItemDrop, -1, -1, null, idx);
             Pick.Add(new PickItem() { idx = idx, Type = fish.type }); // 添加到拾取表
         }
@@ -997,7 +997,7 @@ public class AutoFishing
         {
             int dropX = data.Pos.X * 16 + 8;
             int dropY = data.Pos.Y * 16 + 8;
-            var idx = Item.NewItem(null, new Vector2(dropX, dropY), Vector2.Zero, item.type, item.stack);
+            var idx = Item.NewItem(null, new Vector2(dropX, dropY), item.type, item.stack);
             NetMessage.SendData((int)PacketTypes.UpdateItemDrop, -1, -1, null, idx);
             Pick.Add(new PickItem() { idx = idx, Type = item.type }); // 添加到拾取表
             item.TurnToAir();
@@ -1058,7 +1058,8 @@ public class AutoFishing
         // 更新原物品
         bool success = remain < orig;
         item.stack = remain;
-        if (item.stack == 0) item.TurnToAir();
+        if (item.stack == 0) 
+            item.TurnToAir();
         return success;
     }
     #endregion
